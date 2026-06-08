@@ -191,6 +191,38 @@ int ui_input_tick(ui_state_t *ui, char *out_line, int out_max) {
             ui->dirty = true;
             return 3;
 
+        case KEY_RESIZE:
+            return 5;
+
+#ifdef KEY_MOUSE
+        case KEY_MOUSE: {
+            MEVENT event;
+            if (getmouse(&event) == OK) {
+#if NCURSES_MOUSE_VERSION > 1
+                if (event.bstate & BUTTON4_PRESSED) {
+                    ui->dirty = true;
+                    return 2;
+                }
+                if (event.bstate & BUTTON5_PRESSED) {
+                    ui->dirty = true;
+                    return 3;
+                }
+#endif
+                if (event.bstate & BUTTON1_CLICKED) {
+                    if (event.x < ui->layout.rooms_w) {
+                        int r = event.y - 2;
+                        if (r >= 0) {
+                            ui->nav_cursor = r;
+                            ui->dirty = true;
+                            return 4;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+#endif
+
         /* Printable characters */
         default:
             if (ch >= 32 && ch < 256 &&

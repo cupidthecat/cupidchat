@@ -60,6 +60,17 @@ cli_room_t *model_get_or_create_room(cli_model_t *m, const char *name) {
     return r;
 }
 
+static void sanitize_text(char *dest, const char *src, size_t max_len) {
+    size_t i = 0;
+    while (*src && i < max_len - 1) {
+        if ((unsigned char)*src >= 32) {
+            dest[i++] = *src;
+        }
+        src++;
+    }
+    dest[i] = '\0';
+}
+
 static void room_push_msg(cli_room_t *r, uint32_t uid, const char *nick,
                           const char *base_nick,
                           const char *text, uint64_t ts_ms, bool self,
@@ -74,7 +85,7 @@ static void room_push_msg(cli_room_t *r, uint32_t uid, const char *nick,
     strncpy(m->nick, nick, CLI_NICK_MAX - 1);
     if (base_nick && base_nick[0] && strcmp(base_nick, nick) != 0)
         strncpy(m->base_nick, base_nick, CLI_NICK_MAX - 1);
-    strncpy(m->text, text, CLI_MSG_MAX - 1);
+    sanitize_text(m->text, text, CLI_MSG_MAX);
     /* set highlight if someone mentioned our nick (never self-highlight) */
     m->is_highlight = !self && my_nick && my_nick[0]
                       && strcasestr(text, my_nick) != NULL;
@@ -168,7 +179,7 @@ void model_push_dm_msg(cli_model_t *m, uint32_t uid, const char *nick,
     /* For outgoing messages store our own nick; for incoming store sender's. */
     const char *src_nick = self ? m->nick : nick;
     snprintf(msg->nick, CLI_NICK_MAX, "%s", src_nick);
-    strncpy(msg->text, text, CLI_MSG_MAX - 1);
+    sanitize_text(msg->text, text, CLI_MSG_MAX);
     d->msgs_head = (d->msgs_head + 1) % d->msgs_cap;
     if (d->msgs_len < d->msgs_cap) d->msgs_len++;
     if (!self) d->unread++;

@@ -533,6 +533,9 @@ static int handle_nick(conn_t *c, const frame_t *f, server_state_t *s) {
 /* Handler: CMSG_REGISTER */
 
 static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
+    if (!rate_consume(&c->rate))
+        return send_error(c, ERR_RATE_LIMITED, "slow down", s);
+
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256]               = {0};
     tlv_read_str(f->payload, f->hdr.length, TAG_NICK,     nick, sizeof(nick));
@@ -560,6 +563,9 @@ static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
 /* Handler: CMSG_LOGIN */
 
 static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
+    if (!rate_consume(&c->rate))
+        return send_error(c, ERR_RATE_LIMITED, "slow down", s);
+
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256]               = {0};
     tlv_read_str(f->payload, f->hdr.length, TAG_NICK,     nick, sizeof(nick));
@@ -639,28 +645,45 @@ static int handle_set_topic(conn_t *c, const frame_t *f, server_state_t *s) {
 
 static int handle_typing(conn_t *c, const frame_t *f, server_state_t *s) {
     char room_name[MAX_ROOM_LEN + 1] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name));
-    int ri = server_find_room(s, room_name);
-    if (ri < 0) return 0;  /* room not found -  silently ignore */
-    /* sender must be a member of the room */
-    if (!conn_is_room_member(c, ri)) return 0;
+    char peer_nick[MAX_NICK_LEN + 1] = {0};
 
-    /* Build SMSG_TYPING_NOTIFY: room + nick of the typer.
-     * Use low priority so it is dropped under backpressure rather than
-     * displacing actual chat messages. */
-    tlv_builder_t b; tlv_builder_init(&b);
-    tlv_put_str(&b, TAG_ROOM, room_name);
-    tlv_put_str(&b, TAG_NICK, c->nick);
-    uint32_t plen; uint8_t *p = tlv_builder_take(&b, &plen);
-    uint8_t *raw; ssize_t rlen =
-        frame_encode(SMSG_TYPING_NOTIFY, FRAME_FLAG_PRIORITY_LOW,
-                     server_next_seq(s), p, plen, &raw);
-    free(p);
-    if (rlen > 0) {
-        /* broadcast to all room members except the sender */
-        server_broadcast_room(s, ri, c->fd, raw, (size_t)rlen,
-                              FRAME_FLAG_PRIORITY_LOW);
-        free(raw);
+    if (tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name))) {
+        int ri = server_find_room(s, room_name);
+        if (ri < 0) return 0;  /* room not found -  silently ignore */
+        /* sender must be a member of the room */
+        if (!conn_is_room_member(c, ri)) return 0;
+
+        /* Build SMSG_TYPING_NOTIFY: room + nick of the typer.
+         * Use low priority so it is dropped under backpressure rather than
+         * displacing actual chat messages. */
+        tlv_builder_t b; tlv_builder_init(&b);
+        tlv_put_str(&b, TAG_ROOM, room_name);
+        tlv_put_str(&b, TAG_NICK, c->nick);
+        uint32_t plen; uint8_t *p = tlv_builder_take(&b, &plen);
+        uint8_t *raw; ssize_t rlen =
+            frame_encode(SMSG_TYPING_NOTIFY, FRAME_FLAG_PRIORITY_LOW,
+                         server_next_seq(s), p, plen, &raw);
+        free(p);
+        if (rlen > 0) {
+            /* broadcast to all room members except the sender */
+            server_broadcast_room(s, ri, c->fd, raw, (size_t)rlen,
+                                  FRAME_FLAG_PRIORITY_LOW);
+            free(raw);
+        }
+    } else if (tlv_read_str(f->payload, f->hdr.length, TAG_PEER_NICK, peer_nick, sizeof(peer_nick))) {
+        conn_t *target = server_find_by_nick(s, peer_nick);
+        if (!target || target->state != CONN_AUTHED) return 0;
+
+        tlv_builder_t b; tlv_builder_init(&b);
+        tlv_put_str(&b, TAG_NICK, c->nick);
+        uint32_t plen; uint8_t *p = tlv_builder_take(&b, &plen);
+        uint8_t *raw; ssize_t rlen =
+            frame_encode(SMSG_TYPING_NOTIFY, FRAME_FLAG_PRIORITY_LOW,
+                         server_next_seq(s), p, plen, &raw);
+        free(p);
+        if (rlen > 0) {
+            conn_enqueue(target, raw, (size_t)rlen, FRAME_FLAG_PRIORITY_LOW, s->cfg);
+        }
     }
     return 0;
 }

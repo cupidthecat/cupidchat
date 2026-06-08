@@ -76,6 +76,9 @@ int ui_init(ui_state_t *ui) {
     keypad(stdscr, TRUE);
     nodelay(stdscr, TRUE);
     curs_set(1);
+#ifdef KEY_MOUSE
+    mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
+#endif
 
     if (has_colors()) {
         start_color();

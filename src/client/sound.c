@@ -30,17 +30,10 @@
 static int g_enabled = 1;   /* cleared to 0 if aplay is absent */
 
 /* Map sound_id_t -> embedded blob. */
-static const struct {
+static struct {
     const uint8_t *data;
     size_t         size;
-} SOUNDS[] = {
-    [SND_WELCOME]   = { snd_welcome_data,   snd_welcome_size   },
-    [SND_GOODBYE]   = { snd_goodbye_data,   snd_goodbye_size   },
-    [SND_DM]        = { snd_dm_data,        snd_dm_size        },
-    [SND_IM]        = { snd_im_data,        snd_im_size        },
-    [SND_BUDDY_IN]  = { snd_buddy_in_data,  snd_buddy_in_size  },
-    [SND_BUDDY_OUT] = { snd_buddy_out_data, snd_buddy_out_size },
-};
+} SOUNDS[6];
 
 #define N_SOUNDS  ((int)(sizeof(SOUNDS) / sizeof(SOUNDS[0])))
 

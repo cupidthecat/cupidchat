@@ -145,20 +145,31 @@ void ui_redraw_rooms(ui_state_t *ui, const cli_model_t *m) {
         if (is_active) wattron(w, A_BOLD | COLOR_PAIR(CP_ROOM));
         else if (r->unread > 0) wattron(w, A_BOLD);
 
-        char label[26];
-        if (r->unread > 0)
-            snprintf(label, sizeof(label), "%s%-*s %d",
+        char label[64];
+        if (r->unread > 0) {
+            bool has_mention = false;
+            for (int j = 0; j < r->unread && j < r->msgs_len; j++) {
+                int idx = (r->msgs_head - 1 - j + r->msgs_cap) % r->msgs_cap;
+                if (r->msgs[idx].is_highlight) { has_mention = true; break; }
+            }
+            if (has_mention) wattron(w, COLOR_PAIR(CP_ERROR));
+            snprintf(label, sizeof(label), "%s%-*s %d%s",
                      r->owner_uid && r->owner_uid == m->user_id ? "~" : "#",
-                     ui->layout.rooms_w - 6, r->name, r->unread);
-        else
+                     ui->layout.rooms_w - (has_mention ? 7 : 6), r->name, r->unread,
+                     has_mention ? "!" : "");
+        } else {
             snprintf(label, sizeof(label), "%s%s",
                      r->owner_uid && r->owner_uid == m->user_id ? "~" : "#",
                      r->name);
+        }
         mvwaddnstr(w, row, 1, label, ui->layout.rooms_w - 2);
         row++;
 
         if (is_active) wattroff(w, A_BOLD | COLOR_PAIR(CP_ROOM));
-        else if (r->unread > 0) wattroff(w, A_BOLD);
+        else if (r->unread > 0) {
+            wattroff(w, A_BOLD);
+            wattroff(w, COLOR_PAIR(CP_ERROR));
+        }
         if (is_nav)    wattroff(w, A_REVERSE);
     }
 
@@ -562,6 +573,15 @@ void ui_redraw_chat(ui_state_t *ui, const cli_model_t *m) {
         if (tr->typing_nick[0] && time(NULL) < tr->typing_until) {
             char tind[80];
             snprintf(tind, sizeof(tind), " * %s is typing...", tr->typing_nick);
+            wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
+            mvwaddnstr(w, chat_h - 1, 0, tind, chat_w);
+            wattroff(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
+        }
+    } else if (m->active_dm >= 0 && m->active_dm < m->dm_count) {
+        const cli_dm_t *td = &m->dms[m->active_dm];
+        if (td->typing_nick[0] && time(NULL) < td->typing_until) {
+            char tind[80];
+            snprintf(tind, sizeof(tind), " * %s is typing...", td->typing_nick);
             wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
             mvwaddnstr(w, chat_h - 1, 0, tind, chat_w);
             wattroff(w, A_DIM | COLOR_PAIR(CP_SYSTEM));

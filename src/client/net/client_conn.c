@@ -202,6 +202,14 @@ int client_send_typing(client_conn_t *cc, const char *room) {
     free(p); return r;
 }
 
+int client_send_typing_dm(client_conn_t *cc, const char *peer_nick) {
+    tlv_builder_t b; tlv_builder_init(&b);
+    tlv_put_str(&b, TAG_PEER_NICK, peer_nick);
+    uint32_t plen; uint8_t *p = tlv_builder_take(&b, &plen);
+    int r = client_send_frame(cc, CMSG_TYPING, p, plen);
+    free(p); return r;
+}
+
 int client_send_join(client_conn_t *cc, const char *room) {
     tlv_builder_t b; tlv_builder_init(&b);
     tlv_put_str(&b, TAG_ROOM, room);

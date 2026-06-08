@@ -44,10 +44,8 @@ static void make_default_nick(char *buf, size_t bufsz) {
 
 /* Signal helpers */
 
-static volatile int g_sigwinch = 0;
 static volatile int g_quit     = 0;
 
-static void on_sigwinch(int s) { (void)s; g_sigwinch = 1; }
 static void on_sigint  (int s) { (void)s; g_quit     = 1; }
 
 /* Config parsing */
@@ -568,13 +566,21 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
 
         case SMSG_TYPING_NOTIFY: {
             char room[65] = {0}, nick[33] = {0};
-            tlv_read_str(p, pl, TAG_ROOM, room, sizeof(room));
-            tlv_read_str(p, pl, TAG_NICK, nick, sizeof(nick));
-            cli_room_t *tr = model_find_room(m, room);
-            if (tr) {
-                snprintf(tr->typing_nick, sizeof(tr->typing_nick), "%s", nick);
-                tr->typing_until = time(NULL) + 3;  /* show for 3 seconds */
-                ctx->ui->dirty = true;
+            if (tlv_read_str(p, pl, TAG_ROOM, room, sizeof(room))) {
+                tlv_read_str(p, pl, TAG_NICK, nick, sizeof(nick));
+                cli_room_t *tr = model_find_room(m, room);
+                if (tr) {
+                    snprintf(tr->typing_nick, sizeof(tr->typing_nick), "%s", nick);
+                    tr->typing_until = time(NULL) + 3;  /* show for 3 seconds */
+                    ctx->ui->dirty = true;
+                }
+            } else if (tlv_read_str(p, pl, TAG_NICK, nick, sizeof(nick))) {
+                cli_dm_t *td = model_get_or_create_dm(m, 0, nick);
+                if (td) {
+                    snprintf(td->typing_nick, sizeof(td->typing_nick), "%s", nick);
+                    td->typing_until = time(NULL) + 3;  /* show for 3 seconds */
+                    ctx->ui->dirty = true;
+                }
             }
             break;
         }
@@ -817,6 +823,41 @@ static void handle_command(const char *line, cli_model_t *m,
             room = m->rooms[m->active_room].name;
         client_send_list_users(cc, room);
         model_set_status(m, "Fetching user list...", 3);
+    } else if (strncmp(cmd, "search ", 7) == 0) {
+        const char *term = cmd + 7;
+        while (*term == ' ') term++;
+        if (!*term) {
+            model_set_status(m, "Usage: /search <term>", 4);
+        } else {
+            int found = 0;
+            if (m->active_room >= 0) {
+                cli_room_t *r = &m->rooms[m->active_room];
+                for (int i = 0; i < r->msgs_len; i++) {
+                    int idx = (r->msgs_head - 1 - i + r->msgs_cap) % r->msgs_cap;
+                    if (strcasestr(r->msgs[idx].text, term)) {
+                        found++;
+                        r->scroll_offset = i;
+                        break;
+                    }
+                }
+            } else if (m->active_dm >= 0) {
+                cli_dm_t *d = &m->dms[m->active_dm];
+                for (int i = 0; i < d->msgs_len; i++) {
+                    int idx = (d->msgs_head - 1 - i + d->msgs_cap) % d->msgs_cap;
+                    if (strcasestr(d->msgs[idx].text, term)) {
+                        found++;
+                        d->scroll_offset = i;
+                        break;
+                    }
+                }
+            }
+            if (found) {
+                char sb[80]; snprintf(sb, sizeof(sb), "Jumped to newest match for '%.30s'", term);
+                model_set_status(m, sb, 4);
+            } else {
+                model_set_status(m, "No matches found", 3);
+            }
+        }
     } else if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "q") == 0) {
         g_quit = 1;
     } else if (strcmp(cmd, "help") == 0) {
@@ -867,7 +908,6 @@ int main(int argc, char **argv) {
     ui_state_t ui;
     ui_init(&ui);
 
-    signal(SIGWINCH, on_sigwinch);
     signal(SIGINT,   on_sigint);
     signal(SIGTERM,  on_sigint);
     signal(SIGPIPE,  SIG_IGN);
@@ -882,11 +922,6 @@ int main(int argc, char **argv) {
     char input_line[4096];
 
     while (!g_quit) {
-        if (g_sigwinch) {
-            g_sigwinch = 0;
-            ui_resize(&ui);
-        }
-
         if (ui.dirty)
             ui_redraw(&ui, &model);
 
@@ -965,13 +1000,16 @@ int main(int argc, char **argv) {
             } else if (kr == 0) {
                 /* regular keystroke -  send typing notification (throttled) */
                 time_t now = time(NULL);
-                if (model.status == CLI_ONLINE &&
-                    model.active_room >= 0 &&
-                    ui.input_len > 0 &&
-                    now - last_typing_sent >= 2) {
-                    const char *room = model.rooms[model.active_room].name;
-                    client_send_typing(&cc, room);
-                    last_typing_sent = now;
+                if (model.status == CLI_ONLINE && ui.input_len > 0 && now - last_typing_sent >= 2) {
+                    if (model.active_room >= 0) {
+                        const char *room = model.rooms[model.active_room].name;
+                        client_send_typing(&cc, room);
+                        last_typing_sent = now;
+                    } else if (model.active_dm >= 0) {
+                        const char *peer = model.dms[model.active_dm].peer_nick;
+                        client_send_typing_dm(&cc, peer);
+                        last_typing_sent = now;
+                    }
                 }
             } else if (kr == 2) {
                 /* PgUp -  scroll up one full page */
@@ -1002,6 +1040,9 @@ int main(int argc, char **argv) {
                     model.active_dm   = nc - model.room_count;
                 }
                 ui.dirty = true;
+            } else if (kr == 5) {
+                /* KEY_RESIZE handled */
+                ui_resize(&ui);
             }
         }
 

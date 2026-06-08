@@ -4073,3 +4073,10 @@ const uint8_t snd_buddy_out_data[] = {
     0x00, 0x00, 0x00, 0x04, 0x28, 0x00, 0x00, 0x05, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x96,
 };
+
+const unsigned long snd_welcome_size = sizeof(snd_welcome_data);
+const unsigned long snd_goodbye_size = sizeof(snd_goodbye_data);
+const unsigned long snd_dm_size = sizeof(snd_dm_data);
+const unsigned long snd_im_size = sizeof(snd_im_data);
+const unsigned long snd_buddy_in_size = sizeof(snd_buddy_in_data);
+const unsigned long snd_buddy_out_size = sizeof(snd_buddy_out_data);
