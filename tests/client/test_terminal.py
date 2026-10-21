@@ -68,7 +68,7 @@ def main():
 
                 receive_until(b'CupidChat sign in')
                 os.write(master, b'\t\t\t\r')
-                receive_until(b'Create a CupidChat account')
+                receive_until(b'Confirm')
                 os.write(master, b'\rterminal-password\rterminal-password\r')
                 receive_until(b'Welcome to CupidChat')
                 os.write(master, b'draft_survives_resize')
