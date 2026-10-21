@@ -220,10 +220,6 @@ int server_run(server_state_t *s) {
 
     LOG_INFO("event loop started (plain_fd=%d tls_fd=%d)", s->listen_fd_plain, s->listen_fd_tls);
 
-    /* collect fds to close after each iteration */
-    int closing[MAX_EVENTS];
-    int nclosing;
-
     while (g_running) {
         int n = epoll_wait(s->epoll_fd, events, MAX_EVENTS, -1);
         if (n < 0) {
@@ -232,8 +228,6 @@ int server_run(server_state_t *s) {
             LOG_ERROR("epoll_wait: %s", strerror(errno));
             break;
         }
-
-        nclosing = 0;
 
         for (int i = 0; i < n; i++) {
             int fd = events[i].data.fd;
@@ -259,14 +253,17 @@ int server_run(server_state_t *s) {
 
             if (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
                 c->state = CONN_CLOSING;
+                c->close_deadline = time(NULL);
             }
 
             if (c->state != CONN_CLOSING) {
                 if (events[i].events & EPOLLIN)
                     read_client(s, c);
                 if (events[i].events & EPOLLOUT) {
-                    if (conn_flush(c) < 0)
+                    if (conn_flush(c) < 0) {
                         c->state = CONN_CLOSING;
+                        c->close_deadline = time(NULL);
+                    }
                 }
             } else {
                 /* Still drain pending output (e.g. an error frame sent just
@@ -281,19 +278,18 @@ int server_run(server_state_t *s) {
                 bp_send_slow_client_error(c, s->cfg);
                 c->state = CONN_CLOSING;
             }
-
-            /* Only close once the output buffer has been fully drained so
-             * that error frames (e.g. ERR_NICK_TAKEN) reach the client. */
-            if (c->state == CONN_CLOSING && !c->obuf_head) {
-                closing[nclosing++] = fd;
-            }
         }
 
-        /* close all connections marked CONN_CLOSING this iteration */
-        for (int i = 0; i < nclosing; i++) {
-            int fd = closing[i];
-            conn_t *c = (fd >= 0 && fd < s->conns_size) ? s->conns[fd] : NULL;
-            if (c)
+        /* Timer-driven closes must not depend on another event from the peer.
+         * Allow error replies to drain for at most two seconds. */
+        time_t now = time(NULL);
+        for (int fd = 0; fd < s->conns_size; fd++) {
+            conn_t *c = s->conns[fd];
+            if (!c || c->state != CONN_CLOSING)
+                continue;
+            if (!c->close_deadline)
+                c->close_deadline = now + 2;
+            if (!c->obuf_head || now >= c->close_deadline)
                 close_conn(s, c);
         }
     }

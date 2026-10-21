@@ -30,16 +30,25 @@ void keepalive_tick(server_state_t *s) {
 
     for (int fd = 0; fd < s->conns_size; fd++) {
         conn_t *c = s->conns[fd];
-        if (!c || c->state != CONN_AUTHED)
+        if (!c || c->state == CONN_CLOSING)
             continue;
 
         int idle = (int)(now - c->last_active);
+        if (c->state == CONN_HANDSHAKE) {
+            if (idle >= s->cfg->ping_timeout) {
+                LOG_INFO("fd=%d handshake timeout", c->fd);
+                c->state = CONN_CLOSING;
+                c->close_deadline = now;
+            }
+            continue;
+        }
 
         if (c->ping_pending) {
             int wait = (int)(now - c->ping_sent_at);
             if (wait >= s->cfg->ping_timeout) {
                 LOG_INFO("fd=%d nick=%s ping timeout, disconnecting", c->fd, c->nick);
                 c->state = CONN_CLOSING;
+                c->close_deadline = now;
             }
         } else if (idle >= s->cfg->ping_interval) {
             send_ping(c, s);
