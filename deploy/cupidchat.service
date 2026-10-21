@@ -1,0 +1,31 @@
+[Unit]
+Description=CupidChat server
+After=network.target
+
+[Service]
+Type=simple
+User=cupidchat
+Group=cupidchat
+EnvironmentFile=/etc/cupidchat/server.env
+ExecStart=/usr/local/bin/cupid-chatd --host ${CUPIDCHAT_HOST} --port ${CUPIDCHAT_PORT} --db /var/lib/cupidchat/cupidchat.db
+WorkingDirectory=/var/lib/cupidchat
+StateDirectory=cupidchat
+StateDirectoryMode=0750
+UMask=0027
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=8192
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
