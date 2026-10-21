@@ -16,7 +16,8 @@
 #include "server/state.h"
 
 /* forward declaration -  defined later in this file */
-int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owner_uid);
+int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owner_uid,
+                              uint64_t owner_account_id);
 
 /* DB startup hydration helpers */
 
@@ -34,12 +35,18 @@ static void hydrate_msg_cb(void *ud, uint32_t uid, const char *nick, const char 
 }
 
 /* fired once per room row; creates the room and loads its history */
-static void hydrate_room_cb(void *ud, const char *name, const char *topic, uint32_t owner_uid) {
+static void hydrate_room_cb(void *ud, const char *name, const char *topic,
+                            uint64_t owner_account_id) {
     server_state_t *s = (server_state_t *)ud;
 
-    int ri = server_get_or_create_room(s, name, owner_uid);
-    if (ri < 0)
+    if (s->room_count >= MAX_ROOMS)
         return;
+    room_t *room = room_create(name, s->cfg->history_size);
+    if (!room)
+        return;
+    room->owner_account_id = owner_account_id;
+    int ri = s->room_count++;
+    s->rooms[ri] = room;
 
     /* restore the topic that was persisted in the database */
     if (topic && *topic)
@@ -88,7 +95,13 @@ int server_state_init(server_state_t *s, const server_config_t *cfg) {
         free(s->conns);
         return -1;
     }
-    db_init_schema(s->db);
+    if (db_init_schema(s->db) < 0) {
+        db_close(s->db);
+        s->db = NULL;
+        free(s->rooms);
+        free(s->conns);
+        return -1;
+    }
     db_seed_defaults(s->db);
 
     /* hydrate in-memory rooms (and their history) from the last run */
@@ -130,8 +143,11 @@ void server_unregister_conn(server_state_t *s, conn_t *c) {
     }
     /* remove from all rooms */
     for (int ri = 0; ri < s->room_count; ri++) {
-        if (s->rooms[ri] && s->rooms[ri]->active)
+        if (s->rooms[ri] && s->rooms[ri]->active) {
             room_remove_member(s->rooms[ri], c->fd);
+            if (!s->rooms[ri]->owner_account_id && s->rooms[ri]->owner_uid == c->user_id)
+                s->rooms[ri]->owner_uid = 0;
+        }
     }
 }
 
@@ -161,7 +177,8 @@ int server_find_room(server_state_t *s, const char *name) {
     return -1;
 }
 
-int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owner_uid) {
+int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owner_uid,
+                              uint64_t owner_account_id) {
     int idx = server_find_room(s, name);
     if (idx >= 0)
         return idx;
@@ -184,11 +201,33 @@ int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owne
     room_t *r = room_create(name, s->cfg->history_size);
     if (!r)
         return -1;
-    r->owner_uid = owner_uid;
+    r->owner_uid = owner_account_id ? 0 : owner_uid;
+    r->owner_account_id = owner_account_id;
+    if (db_create_room(s->db, name, owner_account_id) < 0) {
+        room_destroy(r);
+        return -1;
+    }
     s->rooms[free_slot] = r;
     LOG_INFO("created room #%s idx=%d owner=%u", name, free_slot, owner_uid);
-    db_persist_room(s->db, name, "", owner_uid);
     return free_slot;
+}
+
+conn_t *server_find_by_account(server_state_t *s, uint64_t account_id) {
+    if (!account_id)
+        return NULL;
+    for (int fd = 0; fd < s->conns_size; fd++) {
+        conn_t *c = s->conns[fd];
+        if (c && c->state == CONN_AUTHED && c->account_id == account_id)
+            return c;
+    }
+    return NULL;
+}
+
+uint32_t server_room_owner_uid(server_state_t *s, const room_t *room) {
+    if (!room->owner_account_id)
+        return room->owner_uid;
+    conn_t *owner = server_find_by_account(s, room->owner_account_id);
+    return owner ? owner->user_id : 0;
 }
 
 void server_broadcast_room(server_state_t *s, int room_idx, int skip_fd, uint8_t *buf, size_t len,
@@ -217,7 +256,11 @@ void server_broadcast_room(server_state_t *s, int room_idx, int skip_fd, uint8_t
 }
 
 uint32_t server_next_uid(server_state_t *s) {
-    return s->next_uid++;
+    uint32_t uid;
+    do {
+        uid = s->next_uid++;
+    } while (!uid || server_find_by_uid(s, uid));
+    return uid;
 }
 
 uint32_t server_next_seq(server_state_t *s) {
@@ -226,10 +269,12 @@ uint32_t server_next_seq(server_state_t *s) {
 
 /* Room deletion */
 
-void server_delete_room(server_state_t *s, int ri) {
+int server_delete_room(server_state_t *s, int ri) {
     room_t *r = (ri >= 0 && ri < s->room_count) ? s->rooms[ri] : NULL;
     if (!r || !r->active)
-        return;
+        return -1;
+    if (db_delete_room(s->db, r->name) < 0)
+        return -1;
 
     char name[65];
     snprintf(name, sizeof(name), "%s", r->name);
@@ -274,9 +319,9 @@ void server_delete_room(server_state_t *s, int ri) {
     if (rlen > 0 && raw)
         free(raw);
 
-    db_delete_room(s->db, name);
     room_destroy(r);
     s->rooms[ri] = NULL;
     /* slot stays NULL; room_count is not decremented so existing indices
      * held by live connections remain valid */
+    return 0;
 }

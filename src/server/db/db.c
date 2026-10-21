@@ -35,6 +35,7 @@ static const char SCHEMA[] = "CREATE TABLE IF NOT EXISTS rooms ("
                              "  name       TEXT    NOT NULL UNIQUE,"
                              "  topic      TEXT    NOT NULL DEFAULT '',"
                              "  owner_uid  INTEGER NOT NULL DEFAULT 0,"
+                             "  owner_account_id INTEGER REFERENCES users(id),"
                              "  created_at INTEGER NOT NULL"
                              ");"
 
@@ -101,19 +102,39 @@ cupid_db_t *db_open(const char *path) {
     return db;
 }
 
-void db_init_schema(cupid_db_t *db) {
-    char *errmsg = NULL;
-    int rc = sqlite3_exec(db->handle, SCHEMA, NULL, NULL, &errmsg);
-    if (rc != SQLITE_OK) {
-        LOG_ERROR("db_init_schema: %s", errmsg);
-        sqlite3_free(errmsg);
-    } else {
-        LOG_DEBUG("%s", "schema ok");
+static int ensure_room_column(cupid_db_t *db, const char *name, const char *alter) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db->handle, "PRAGMA table_info(rooms)", -1, &stmt, NULL) != SQLITE_OK)
+        return -1;
+    bool found = false;
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *column = (const char *)sqlite3_column_text(stmt, 1);
+        if (column && !strcmp(column, name))
+            found = true;
     }
-    /* Migration: add owner_uid if upgrading from an older DB that lacks it.
-     * ALTER TABLE fails silently when the column already exists. */
-    sqlite3_exec(db->handle, "ALTER TABLE rooms ADD COLUMN owner_uid INTEGER NOT NULL DEFAULT 0;",
-                 NULL, NULL, NULL);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE)
+        return -1;
+    return found || sqlite3_exec(db->handle, alter, NULL, NULL, NULL) == SQLITE_OK ? 0 : -1;
+}
+
+int db_init_schema(cupid_db_t *db) {
+    if (sqlite3_exec(db->handle, "BEGIN IMMEDIATE", NULL, NULL, NULL) != SQLITE_OK)
+        return -1;
+    if (sqlite3_exec(db->handle, SCHEMA, NULL, NULL, NULL) != SQLITE_OK ||
+        ensure_room_column(db, "owner_uid",
+                           "ALTER TABLE rooms ADD COLUMN owner_uid INTEGER NOT NULL DEFAULT 0") <
+            0 ||
+        ensure_room_column(
+            db, "owner_account_id",
+            "ALTER TABLE rooms ADD COLUMN owner_account_id INTEGER REFERENCES users(id)") < 0 ||
+        sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
+        LOG_ERROR("db_init_schema: %s", sqlite3_errmsg(db->handle));
+        sqlite3_exec(db->handle, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+    return 0;
 }
 
 void db_seed_defaults(cupid_db_t *db) {
@@ -146,46 +167,62 @@ void db_close(cupid_db_t *db) {
 
 /* Writes */
 
-void db_persist_room(cupid_db_t *db, const char *name, const char *topic, uint32_t owner_uid) {
-    /* INSERT new row or UPDATE topic/owner on conflict so that calls from
-     * handle_set_topic actually persist the latest topic to disk. */
-    const char *sql = "INSERT INTO rooms(name, topic, owner_uid, created_at)"
-                      " VALUES(?, ?, ?, CAST(strftime('%s','now') AS INTEGER) * 1000)"
-                      " ON CONFLICT(name) DO UPDATE SET"
-                      "   topic     = excluded.topic,"
-                      "   owner_uid = excluded.owner_uid;";
-
+int db_create_room(cupid_db_t *db, const char *name, uint64_t owner_account_id) {
+    /* Legacy owner_uid values stay available for an operator to review.
+     * New rows use zero there; connection IDs never grant persistent ownership. */
+    const char *sql = "INSERT INTO rooms(name, topic, owner_uid, owner_account_id, created_at)"
+                      " VALUES(?, '', 0, ?, CAST(strftime('%s','now') AS INTEGER) * 1000);";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
-        return;
+        return -1;
     sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, topic ? topic : "", -1, SQLITE_STATIC);
-    sqlite3_bind_int64(stmt, 3, (int64_t)owner_uid);
-    sqlite3_step(stmt);
+    if (owner_account_id)
+        sqlite3_bind_int64(stmt, 2, (sqlite3_int64)owner_account_id);
+    else
+        sqlite3_bind_null(stmt, 2);
+    int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE)
+        LOG_ERROR("db_create_room: %s", sqlite3_errmsg(db->handle));
+    return rc == SQLITE_DONE ? 0 : -1;
 }
 
-void db_delete_room(cupid_db_t *db, const char *name) {
-    /* Wrap both DELETEs in a transaction so a crash between them cannot
-     * leave orphaned message rows for a room that no longer exists. */
-    sqlite3_exec(db->handle, "BEGIN;", NULL, NULL, NULL);
-
-    const char *del_msgs = "DELETE FROM messages WHERE room_name = ?;";
+int db_set_room_topic(cupid_db_t *db, const char *name, const char *topic) {
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(db->handle, del_msgs, -1, &stmt, NULL) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
-    }
-    const char *del_room = "DELETE FROM rooms WHERE name = ?;";
-    if (sqlite3_prepare_v2(db->handle, del_room, -1, &stmt, NULL) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
-    }
+    if (sqlite3_prepare_v2(db->handle, "UPDATE rooms SET topic = ? WHERE name = ?", -1, &stmt,
+                           NULL) != SQLITE_OK)
+        return -1;
+    sqlite3_bind_text(stmt, 1, topic, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, name, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE && sqlite3_changes(db->handle) == 1 ? 0 : -1;
+}
 
-    sqlite3_exec(db->handle, "COMMIT;", NULL, NULL, NULL);
-    LOG_INFO("deleted room #%s from db", name);
+int db_delete_room(cupid_db_t *db, const char *name) {
+    if (sqlite3_exec(db->handle, "BEGIN IMMEDIATE", NULL, NULL, NULL) != SQLITE_OK)
+        return -1;
+    const char *queries[] = {"DELETE FROM messages WHERE room_name = ?",
+                             "DELETE FROM rooms WHERE name = ?"};
+    for (size_t i = 0; i < sizeof(queries) / sizeof(queries[0]); i++) {
+        sqlite3_stmt *stmt = NULL;
+        int rc = sqlite3_prepare_v2(db->handle, queries[i], -1, &stmt, NULL);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+            rc = sqlite3_step(stmt);
+        }
+        sqlite3_finalize(stmt);
+        if (rc != SQLITE_DONE) {
+            LOG_ERROR("db_delete_room: %s", sqlite3_errmsg(db->handle));
+            sqlite3_exec(db->handle, "ROLLBACK", NULL, NULL, NULL);
+            return -1;
+        }
+    }
+    if (sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->handle, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+    return 0;
 }
 
 void db_persist_message(cupid_db_t *db, const char *room_name, uint32_t user_id, const char *nick,
@@ -226,7 +263,7 @@ void db_persist_dm(cupid_db_t *db, uint32_t from_uid, const char *from_nick, uin
 /* Reads */
 
 void db_load_rooms(cupid_db_t *db, db_room_cb cb, void *userdata) {
-    const char *sql = "SELECT name, topic, owner_uid FROM rooms ORDER BY id ASC;";
+    const char *sql = "SELECT name, topic, owner_account_id FROM rooms ORDER BY id ASC;";
 
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK) {
@@ -236,9 +273,9 @@ void db_load_rooms(cupid_db_t *db, db_room_cb cb, void *userdata) {
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *name = (const char *)sqlite3_column_text(stmt, 0);
         const char *topic = (const char *)sqlite3_column_text(stmt, 1);
-        uint32_t owner_uid = (uint32_t)sqlite3_column_int64(stmt, 2);
+        uint64_t owner_account_id = (uint64_t)sqlite3_column_int64(stmt, 2);
         if (name)
-            cb(userdata, name, topic ? topic : "", owner_uid);
+            cb(userdata, name, topic ? topic : "", owner_account_id);
     }
     sqlite3_finalize(stmt);
 }
@@ -331,7 +368,7 @@ static void make_crypt_salt(char *buf, size_t buflen) {
     buf[12] = '\0';
 }
 
-bool db_register_user(cupid_db_t *db, const char *username, const char *password) {
+uint64_t db_register_account(cupid_db_t *db, const char *username, const char *password) {
     char salt[16];
     make_crypt_salt(salt, sizeof(salt));
 
@@ -339,14 +376,14 @@ bool db_register_user(cupid_db_t *db, const char *username, const char *password
     memset(&cd, 0, sizeof(cd));
     char *hash = crypt_r(password, salt, &cd);
     if (!hash)
-        return false;
+        return 0;
 
     const char *sql = "INSERT INTO users(username, password_hash, created_at)"
                       " VALUES(?, ?, CAST(strftime('%s','now') AS INTEGER) * 1000);";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK) {
         LOG_ERROR("db_register_user prepare: %s", sqlite3_errmsg(db->handle));
-        return false;
+        return 0;
     }
     sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, hash, -1, SQLITE_TRANSIENT);
@@ -355,23 +392,23 @@ bool db_register_user(cupid_db_t *db, const char *username, const char *password
 
     if (rc == SQLITE_DONE) {
         LOG_INFO("registered new user: %s", username);
-        return true;
+        return (uint64_t)sqlite3_last_insert_rowid(db->handle);
     } else if (rc == SQLITE_CONSTRAINT) {
-        return false; /* UNIQUE violation -  account already exists */
+        return 0; /* UNIQUE violation -  account already exists */
     } else {
         LOG_ERROR("db_register_user step (%d): %s", rc, sqlite3_errmsg(db->handle));
-        return false;
+        return 0;
     }
 }
 
-bool db_authenticate_user(cupid_db_t *db, const char *username, const char *password) {
-    const char *sql = "SELECT password_hash FROM users WHERE username = ? COLLATE NOCASE;";
+uint64_t db_authenticate_account(cupid_db_t *db, const char *username, const char *password) {
+    const char *sql = "SELECT password_hash, id FROM users WHERE username = ? COLLATE NOCASE;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
-        return false;
+        return 0;
     sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
 
-    bool ok = false;
+    uint64_t account_id = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *stored = (const char *)sqlite3_column_text(stmt, 0);
         if (stored) {
@@ -379,9 +416,17 @@ bool db_authenticate_user(cupid_db_t *db, const char *username, const char *pass
             memset(&cd, 0, sizeof(cd));
             char *hash = crypt_r(password, stored, &cd);
             if (hash && strcmp(hash, stored) == 0)
-                ok = true;
+                account_id = (uint64_t)sqlite3_column_int64(stmt, 1);
         }
     }
     sqlite3_finalize(stmt);
-    return ok;
+    return account_id;
+}
+
+bool db_register_user(cupid_db_t *db, const char *username, const char *password) {
+    return db_register_account(db, username, password) != 0;
+}
+
+bool db_authenticate_user(cupid_db_t *db, const char *username, const char *password) {
+    return db_authenticate_account(db, username, password) != 0;
 }
