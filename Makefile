@@ -119,7 +119,8 @@ TEST_BINS := \
     $(BUILDDIR)/tests/proto/test_frame \
     $(BUILDDIR)/tests/proto/test_tlv   \
     $(BUILDDIR)/tests/server/test_rate_limit \
-    $(BUILDDIR)/tests/client/test_ui
+    $(BUILDDIR)/tests/client/test_ui \
+    $(BUILDDIR)/tests/server/test_backpressure
 
 # Default target 
 .PHONY: all clean check install
@@ -148,6 +149,11 @@ $(BUILDDIR)/tests/server/test_rate_limit: \
     $(TESTDIR)/server/test_rate_limit.c \
     $(BUILDDIR)/server/core/rate_limit.o \
     $(SHARED_OBJ)
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@
+
+$(BUILDDIR)/tests/server/test_backpressure: \
+    $(TESTDIR)/server/test_backpressure.c $(BUILDDIR)/server/core/conn.o \
+    $(BUILDDIR)/server/util/log.o $(SHARED_OBJ)
 	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@
 
 check: $(TEST_BINS)
