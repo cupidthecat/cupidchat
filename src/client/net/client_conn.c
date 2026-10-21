@@ -458,3 +458,29 @@ int client_read_frames(client_conn_t *cc, void (*on_frame)(const frame_t *, void
             return -1;
     }
 }
+
+int client_get_profile(client_conn_t *cc, uint32_t request, uint32_t uid, const char *account,
+                       const char *nick) {
+    tlv_builder_t b;
+    tlv_builder_init(&b);
+    tlv_put_u32(&b, TAG_REQUEST_ID, request);
+    if (uid)
+        tlv_put_u32(&b, TAG_USER_ID, uid);
+    if (account && *account)
+        tlv_put_str(&b, TAG_BASE_NICK, account);
+    else if (nick && *nick)
+        tlv_put_str(&b, TAG_NICK, nick);
+    int rc = client_send_frame(cc, CMSG_PROFILE_GET, b.buf, (uint32_t)b.len);
+    tlv_builder_free(&b);
+    return rc;
+}
+
+int client_save_profile(client_conn_t *cc, uint32_t request, const profile_fields_t *fields) {
+    tlv_builder_t b;
+    tlv_builder_init(&b);
+    int rc = -1;
+    if (tlv_put_u32(&b, TAG_REQUEST_ID, request) == 0 && profile_fields_write(&b, fields) == 0)
+        rc = client_send_frame(cc, CMSG_PROFILE_SET, b.buf, (uint32_t)b.len);
+    tlv_builder_free(&b);
+    return rc;
+}

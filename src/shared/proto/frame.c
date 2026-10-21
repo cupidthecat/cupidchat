@@ -139,6 +139,8 @@ ssize_t frame_encode(uint16_t type, uint16_t flags, uint32_t seq, const uint8_t 
 
 void frame_free(frame_t *f) {
     if (f) {
+        if (f->payload && (f->hdr.type == CMSG_LOGIN || f->hdr.type == CMSG_REGISTER))
+            explicit_bzero(f->payload, f->hdr.length);
         free(f->payload);
         f->payload = NULL;
     }
@@ -150,6 +152,9 @@ void frame_dump(const frame_t *f, int fd) {
                      f->hdr.type, f->hdr.flags, f->hdr.seq, f->hdr.length);
     if (write(fd, line, (size_t)n) != (ssize_t)n)
         (void)0;
+
+    if (f->hdr.type == CMSG_LOGIN || f->hdr.type == CMSG_REGISTER)
+        return; /* Credential payloads must never enter debug logs. */
 
     /* hex dump first 64 bytes of payload */
     uint32_t dump_len = f->hdr.length < 64 ? f->hdr.length : 64;

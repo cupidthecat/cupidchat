@@ -68,13 +68,26 @@ the sidebar for a different room. Older clients ignore the extra field.
 
 ## Data and operations
 
+### Accounts and profiles
+
+Chat requires an account. Upgrade clients along with the server to get the
+sign-in/create-account screen and profile editor. Older clients can sign in
+with `/login` or `/register`, but cannot browse rooms or chat before doing so.
+There is no guest mode. Existing accounts and passwords remain valid.
+
+Startup creates `user_profiles` if it is missing. Its optional public fields
+reference `users.id`; existing users get an empty profile until they save one.
+The upgrade preserves rooms, messages, topics, accounts, and buddy lists.
+Unfinished sign-ins close after five minutes. Verbose frame logs omit login
+and registration payloads.
+
 ### Ownership migration
 
 Back up the database with SQLite's backup API before upgrading. The schema adds
 `rooms.owner_account_id`, which references `users.id`. Existing `owner_uid`
 values remain in the database for review but do not grant permissions. Existing
-rooms, topics, and messages remain available. Guest ownership ends when its
-connection closes; account ownership persists.
+rooms, topics, and messages remain available. Guest access is disabled; account
+ownership persists.
 
 To assign a legacy room after confirming its owner, stop the service and use a
 SQLite transaction. Substitute the verified account and room names below:

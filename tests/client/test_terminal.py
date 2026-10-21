@@ -66,6 +66,10 @@ def main():
                     while time.monotonic() < deadline and select.select([master], [], [], 0.2)[0]:
                         transcript.extend(os.read(master, 65536))
 
+                receive_until(b'CupidChat sign in')
+                os.write(master, b'\t\t\t\r')
+                receive_until(b'Create a CupidChat account')
+                os.write(master, b'\rterminal-password\rterminal-password\r')
                 receive_until(b'Welcome to CupidChat')
                 os.write(master, b'draft_survives_resize')
                 receive_until(b'draft_survives_resize')

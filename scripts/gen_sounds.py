@@ -27,6 +27,7 @@ SOUNDS = [
     ("Topic.wav",           "topic"),
     ("BuddyOnline.wav",     "buddy_online"),
     ("BuddyOffline.wav",    "buddy_offline"),
+    ("ProfileSaved.wav",    "profile_saved"),
 ]
 
 HEADER_BANNER = """\

@@ -20,6 +20,12 @@ enum {
     UI_NEXT_UNREAD,
     UI_BUDDY_SELECT,
     UI_BUDDY_OPEN,
+    UI_AUTH_SUBMIT,
+    UI_PROFILE_OPEN,
+    UI_PROFILE_SAVE,
+    UI_PROFILE_MESSAGE,
+    UI_PROFILE_BUDDY,
+    UI_PROFILE_REFRESH,
     UI_QUIT
 };
 
@@ -29,6 +35,24 @@ typedef struct {
     bool show_users, dirty, show_help_modal, show_emoji_modal, show_buddies_modal, confirm_quit;
     int buddy_cursor;
     int emoji_cursor;
+    bool show_auth, auth_register, auth_pending;
+    int auth_focus, auth_cursors[3];
+    char auth_name[33], auth_password[256], auth_confirm[256], auth_error[192];
+    bool show_profile, profile_loading, profile_editing, profile_saving, profile_discard;
+    profile_info_t profile;
+    profile_fields_t profile_draft;
+    uint32_t profile_request, profile_target_uid;
+    char profile_target_nick[33], profile_target_account[33], profile_error[192];
+    int profile_focus, profile_offset, profile_cursors[PROFILE_FIELD_COUNT];
+    int profile_buttons[6][4], profile_button_count, users_offset;
+
+    struct {
+        int row, left, right;
+        uint32_t uid;
+        char nick[33];
+    } name_hits[CLI_HISTORY_CAP];
+
+    int name_hit_count;
     char input_buf[4096];
     int input_len, input_cursor, input_offset, nav_cursor;
     int sidebar_offset, help_offset, scroll_delta;
@@ -52,3 +76,10 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m);
 void ui_redraw_users(ui_state_t *ui, const cli_model_t *m);
 void ui_redraw_input(ui_state_t *ui);
 void ui_redraw(ui_state_t *ui, cli_model_t *m);
+void ui_auth_clear_secrets(ui_state_t *ui);
+int ui_auth_input(ui_state_t *ui, int key, uint32_t character, bool printable);
+void ui_redraw_auth(ui_state_t *ui, const cli_model_t *m);
+int ui_profile_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
+                     bool printable);
+void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m);
+int ui_profile_target(ui_state_t *ui, uint32_t uid, const char *nick, const char *account);

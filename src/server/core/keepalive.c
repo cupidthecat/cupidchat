@@ -34,6 +34,13 @@ void keepalive_tick(server_state_t *s) {
             continue;
 
         int idle = (int)(now - c->last_active);
+        if (c->state == CONN_LOGIN) {
+            if (now - c->auth_started >= 300) {
+                c->state = CONN_CLOSING;
+                c->close_deadline = now;
+            }
+            continue;
+        }
         if (c->state == CONN_HANDSHAKE) {
             if (idle >= s->cfg->ping_timeout) {
                 LOG_INFO("fd=%d handshake timeout", c->fd);

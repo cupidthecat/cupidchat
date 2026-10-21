@@ -28,7 +28,7 @@ void tlv_builder_free(tlv_builder_t *b) {
 static int builder_reserve(tlv_builder_t *b, size_t extra) {
     if (b->cap - b->len >= extra)
         return 0;
-    size_t nc = b->cap * 2;
+    size_t nc = b->cap ? b->cap * 2 : 256;
     while (nc - b->len < extra)
         nc *= 2;
     uint8_t *nb = realloc(b->buf, nc);

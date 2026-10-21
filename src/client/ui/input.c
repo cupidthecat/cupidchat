@@ -41,7 +41,24 @@ void ui_clamp_navigation(ui_state_t *ui, const cli_model_t *m) {
 int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
     if (x < 0 || y < 0 || x >= ui->layout.cols || y >= ui->layout.rows || ui->layout.too_small)
         return UI_NONE;
+    for (int i = 0; i < ui->name_hit_count; i++)
+        if (y == ui->name_hits[i].row && x >= ui->name_hits[i].left && x < ui->name_hits[i].right)
+            return ui_profile_target(ui, ui->name_hits[i].uid, ui->name_hits[i].nick, NULL);
+    if (y == 0)
+        return ui_profile_target(ui, 0, NULL, m->base_nick);
+    if (y == 1 && m->active_dm >= 0 && m->active_dm < m->dm_count)
+        return ui_profile_target(ui, m->dms[m->active_dm].peer_uid, m->dms[m->active_dm].peer_nick,
+                                 NULL);
+    if (ui->show_users && x >= ui->layout.cols - ui->layout.users_w && y >= 3 &&
+        y < 2 + ui->layout.chat_h && m->active_room >= 0 &&
+        !strcmp(m->users_room, m->rooms[m->active_room].name)) {
+        int index = ui->users_offset + y - 3;
+        if (index < m->user_count)
+            return ui_profile_target(ui, m->users[index].user_id, m->users[index].nick, NULL);
+    }
     if (y == ui->layout.rows - 2) {
+        if (x >= 49 && x < 58 && ui->layout.cols >= 59)
+            return ui_profile_target(ui, 0, NULL, m->base_nick);
         if (x < 7)
             return UI_CLOSE;
         if (x >= 8 && x < 14) {
@@ -174,6 +191,13 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
 
     if (ch == KEY_RESIZE || ch == 0x0c)
         return UI_RESIZE;
+    if (ui->show_auth) {
+        if (ui->layout.too_small)
+            return ch == 0x11 ? UI_QUIT : UI_NONE;
+        return ui_auth_input(ui, ch, key, kind == OK);
+    }
+    if (ui->show_profile)
+        return ui_profile_input(ui, m, ch, key, kind == OK);
     if (ui->confirm_quit) {
         if (ch == '\n' || ch == KEY_ENTER)
             return UI_QUIT;
@@ -203,7 +227,31 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
             ui->buddy_cursor = 0;
         else if (ui->buddy_cursor >= m->buddy_count)
             ui->buddy_cursor = m->buddy_count - 1;
-        if (ch == 27)
+        if (ch == 'p' || ch == 'P') {
+            if (m->buddy_count)
+                return ui_profile_target(ui, 0, NULL, m->buddies[ui->buddy_cursor].account);
+        } else if (ch == KEY_MOUSE) {
+            MEVENT mouse;
+            if (getmouse(&mouse) == OK && (mouse.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED))) {
+                int width = ui->layout.cols - 2;
+                if (width > 64)
+                    width = 64;
+                int height = ui->layout.rows - 2;
+                if (height > m->buddy_count + 5)
+                    height = m->buddy_count + 5;
+                if (height < 6)
+                    height = 6;
+                int visible = height - 4;
+                int first = ui->buddy_cursor / visible * visible;
+                int row = mouse.y - (ui->layout.rows - height) / 2 - 1;
+                if (mouse.x >= (ui->layout.cols - width) / 2 + 1 &&
+                    mouse.x < (ui->layout.cols + width) / 2 - 1 && row >= 0 && row < visible &&
+                    first + row < m->buddy_count) {
+                    ui->buddy_cursor = first + row;
+                    return ui_profile_target(ui, 0, NULL, m->buddies[ui->buddy_cursor].account);
+                }
+            }
+        } else if (ch == 27)
             ui->show_buddies_modal = false;
         else if ((ch == KEY_DOWN || ch == '\t') && m->buddy_count)
             ui->buddy_cursor = (ui->buddy_cursor + 1) % m->buddy_count;
@@ -251,12 +299,24 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return UI_LATEST;
     if (ch == KEY_F(5))
         return UI_NEXT_UNREAD;
+    if (ch == KEY_F(7))
+        return ui_profile_target(ui, 0, NULL, m->base_nick);
     if (ch == KEY_F(6))
         return UI_BUDDY_OPEN;
     if (ch == KEY_MOUSE) {
         MEVENT event;
         if (getmouse(&event) != OK)
             return UI_NONE;
+        if (ui->show_users && event.x >= ui->layout.cols - ui->layout.users_w && event.y >= 3 &&
+            event.y < ui->layout.rows - 2) {
+            if (event.bstate & BUTTON4_PRESSED)
+                ui->users_offset -= 3;
+#ifdef BUTTON5_PRESSED
+            if (event.bstate & BUTTON5_PRESSED)
+                ui->users_offset += 3;
+#endif
+            ui->dirty = true;
+        }
         if (event.x >= 0 && event.x < ui->layout.cols && event.y >= 2 &&
             event.y < 2 + ui->layout.chat_h && event.x >= ui->layout.rooms_w &&
             event.x < ui->layout.rooms_w + ui->layout.chat_w) {

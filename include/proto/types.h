@@ -9,6 +9,8 @@
 #define MAX_MSG_LEN 4096
 #define CAP_HISTORY 0x00000001u
 #define CAP_BUDDIES 0x00000002u
+#define CAP_PROFILES 0x00000004u
+#define CAP_ACCOUNT_REQUIRED 0x00000008u
 #define MAX_BUDDIES 64
 
 /* Shared wire values. Rebuild clients with these recovered headers:
@@ -35,6 +37,8 @@ typedef enum {
     CMSG_BUDDY_ADD = 0x0040,
     CMSG_BUDDY_REMOVE = 0x0041,
     CMSG_BUDDY_LIST = 0x0042,
+    CMSG_PROFILE_GET = 0x0050,
+    CMSG_PROFILE_SET = 0x0051,
     CMSG_FILE_OFFER = 0x0100,
     CMSG_FILE_ACCEPT = 0x0101,
     CMSG_FILE_DECLINE = 0x0102,
@@ -65,7 +69,9 @@ typedef enum {
     SMSG_PING = 0x8030,
     SMSG_PONG = 0x8031,
     SMSG_BUDDY_LIST = 0x8040,
-    SMSG_BUDDY_PRESENCE = 0x8041
+    SMSG_BUDDY_PRESENCE = 0x8041,
+    SMSG_PROFILE = 0x8050,
+    SMSG_PROFILE_SAVED = 0x8051
 } server_msg_t;
 
 typedef enum {
@@ -90,7 +96,17 @@ typedef enum {
     TAG_SCOPE = 0x0034,
     TAG_PRESENCE = 0x0035,
     TAG_ERROR_CODE = 0x0040,
-    TAG_ERROR_MSG = 0x0041
+    TAG_ERROR_MSG = 0x0041,
+    TAG_REQUEST_ID = 0x0050,
+    TAG_DISPLAY_NAME = 0x0051,
+    TAG_PROFILE_STATUS = 0x0052,
+    TAG_BIO = 0x0053,
+    TAG_PRONOUNS = 0x0054,
+    TAG_LOCATION = 0x0055,
+    TAG_WEBSITE = 0x0056,
+    TAG_MEMBER_SINCE = 0x0057,
+    TAG_IS_ACCOUNT = 0x0058,
+    TAG_IS_SELF = 0x0059
 } tlv_tag_t;
 
 typedef enum {

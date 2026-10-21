@@ -1,5 +1,6 @@
 /* CupidChat public interface. */
 #pragma once
+#include "proto/profile.h"
 #include <stdbool.h>
 #include <stdint.h>
 typedef struct cupid_db cupid_db_t;
@@ -28,3 +29,7 @@ typedef void (*db_buddy_cb)(void *, uint64_t, const char *);
 int db_list_buddies(cupid_db_t *db, uint64_t owner, db_buddy_cb cb, void *ctx);
 int db_update_buddy(cupid_db_t *db, uint64_t owner, const char *name, bool remove);
 int db_account_name(cupid_db_t *db, uint64_t account, char *name, int capacity);
+uint64_t db_find_account(cupid_db_t *db, const char *name);
+int db_get_profile(cupid_db_t *db, uint64_t account, const char *name, profile_info_t *info,
+                   uint64_t *found_account);
+int db_set_profile(cupid_db_t *db, uint64_t account, const profile_fields_t *fields);
