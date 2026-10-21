@@ -381,8 +381,37 @@ distribution is not required for WSLg playback.
 
 Run `./cupid-chat --sound-test` to play the embedded welcome sound without
 connecting. It prints the audio server, attempted player paths, and player errors.
-If playback succeeds but you hear nothing, check the Windows volume mixer and
-output device. WSL installations without WSLg need a configured audio server.
+WSL installations without WSLg need a configured audio server.
+
+### Playback finishes but nothing is audible
+
+`paplay` can complete successfully while Windows routes WSLg audio to the wrong
+device. The Windows session can appear as **Microsoft Remote Desktop** or
+**RemoteApp Audio**. Its output can differ from the system's default speakers.
+
+1. Run `./cupid-chat --sound-test` so Windows can show the audio session.
+2. Open **Windows Settings > System > Sound > Volume mixer**.
+3. Find the Remote Desktop audio session, unmute it, and select the speakers or
+   headset you are using. Check the device assigned to that application, even
+   if other Windows applications already play through the correct speakers.
+4. Run the sound diagnostic again and confirm that you can hear it. A successful
+   player exit alone does not confirm audible output.
+
+If the session stays on the previous device, save work in Linux GUI applications
+before reconnecting WSLg's Remote Desktop bridge. From Windows PowerShell:
+
+```powershell
+Get-Process msrdc -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq "$env:ProgramFiles\WSL\msrdc.exe" } |
+    Stop-Process
+```
+
+WSLg restarts its bridge and opens a new audio session. This disconnects WSLg
+GUI windows; terminal and background Linux processes continue running. Run
+`./cupid-chat --sound-test` again after the bridge reconnects.
+
+The output-device setting belongs to Windows on each client PC. Updating the
+chat server or pulling this repository does not change that setting.
 
 The client tries `paplay`, `pw-play`, then `aplay`. Playback workers are limited
 to four at once, with a 200 ms notification interval. Each player has an eight
