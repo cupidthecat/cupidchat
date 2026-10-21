@@ -1,15 +1,25 @@
 /* CupidChat public interface. */
 #pragma once
 #include "client/model.h"
+
 typedef struct {
     int rows, cols, rooms_w, users_w, chat_w, chat_h;
     bool too_small;
 } ui_layout_t;
 
 enum {
-    UI_NONE, UI_LINE, UI_PAGE_UP, UI_PAGE_DOWN, UI_SELECT, UI_RESIZE,
-    UI_SCROLL, UI_CLOSE, UI_LATEST, UI_QUIT
+    UI_NONE,
+    UI_LINE,
+    UI_PAGE_UP,
+    UI_PAGE_DOWN,
+    UI_SELECT,
+    UI_RESIZE,
+    UI_SCROLL,
+    UI_CLOSE,
+    UI_LATEST,
+    UI_QUIT
 };
+
 typedef struct {
     ui_layout_t layout;
     void *win_topbar, *win_topic, *win_rooms, *win_chat, *win_users, *win_input;

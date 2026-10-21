@@ -6,21 +6,23 @@
  * periodically to top up tokens.
  */
 
-#include <time.h>
 #include <stdbool.h>
+#include <time.h>
 
-#include "server/rate_limit.h"
 #include "server/conn.h"
 #include "server/log.h"
+#include "server/rate_limit.h"
 
 /* Refill tokens based on elapsed wall-clock seconds. */
 void rate_refill(rate_bucket_t *b) {
-    time_t now   = time(NULL);
-    int elapsed  = (int)(now - b->last_refill);
-    if (elapsed <= 0) return;
+    time_t now = time(NULL);
+    int elapsed = (int)(now - b->last_refill);
+    if (elapsed <= 0)
+        return;
 
     b->tokens += elapsed * b->rate;
-    if (b->tokens > b->capacity) b->tokens = b->capacity;
+    if (b->tokens > b->capacity)
+        b->tokens = b->capacity;
     b->last_refill = now;
 }
 
@@ -30,14 +32,15 @@ void rate_refill(rate_bucket_t *b) {
  */
 bool rate_consume(rate_bucket_t *b) {
     rate_refill(b);
-    if (b->tokens <= 0) return false;
+    if (b->tokens <= 0)
+        return false;
     b->tokens--;
     return true;
 }
 
 void rate_bucket_init(rate_bucket_t *b, int rate, int burst) {
-    b->rate       = rate;
-    b->capacity   = burst;
-    b->tokens     = burst;
+    b->rate = rate;
+    b->capacity = burst;
+    b->tokens = burst;
     b->last_refill = time(NULL);
 }

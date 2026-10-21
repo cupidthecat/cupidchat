@@ -7,12 +7,12 @@
  * Levels: DEBUG INFO WARN ERROR
  */
 
-#include <stdio.h>
 #include <stdarg.h>
-#include <time.h>
-#include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #include "server/log.h"
 
@@ -24,16 +24,22 @@ void log_set_level(log_level_t lvl) {
 
 static const char *level_str(log_level_t l) {
     switch (l) {
-        case LOG_DEBUG: return "DEBUG";
-        case LOG_INFO:  return "INFO ";
-        case LOG_WARN:  return "WARN ";
-        case LOG_ERROR: return "ERROR";
-        default:        return "?????";
+        case LOG_DEBUG:
+            return "DEBUG";
+        case LOG_INFO:
+            return "INFO ";
+        case LOG_WARN:
+            return "WARN ";
+        case LOG_ERROR:
+            return "ERROR";
+        default:
+            return "?????";
     }
 }
 
 void log_emit(log_level_t lvl, const char *file, int line, const char *fmt, ...) {
-    if (lvl < g_min_level) return;
+    if (lvl < g_min_level)
+        return;
 
     /* timestamp */
     time_t now = time(NULL);

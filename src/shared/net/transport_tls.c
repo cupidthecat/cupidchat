@@ -20,15 +20,15 @@
  * Thread safety: NOT thread-safe (single-threaded server/client design).
  */
 
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
-#include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/ssl.h>
 
 #include "net/transport.h"
 
@@ -36,7 +36,7 @@
 
 typedef struct {
     SSL_CTX *ctx;
-    SSL     *ssl;
+    SSL *ssl;
 } tls_priv_t;
 
 /* Error helpers */
@@ -87,19 +87,24 @@ static ssize_t tls_read(transport_t *t, void *buf, size_t n) {
     /* Progress handshake if not yet established */
     if (t->mode != TRANSPORT_TLS_ESTABLISHED) {
         int hr = do_handshake(t);
-        if (hr != 0) { errno = EAGAIN; return -1; }
+        if (hr != 0) {
+            errno = EAGAIN;
+            return -1;
+        }
     }
 
     tls_priv_t *priv = t->tls_ctx;
     int r = SSL_read(priv->ssl, buf, (int)n);
-    if (r > 0) return (ssize_t)r;
+    if (r > 0)
+        return (ssize_t)r;
 
     int err = SSL_get_error(priv->ssl, r);
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         errno = EAGAIN;
         return -1;
     }
-    if (err == SSL_ERROR_ZERO_RETURN || r == 0) return 0;  /* clean EOF */
+    if (err == SSL_ERROR_ZERO_RETURN || r == 0)
+        return 0; /* clean EOF */
     log_ssl_errors("SSL_read");
     return -1;
 }
@@ -109,12 +114,16 @@ static ssize_t tls_read(transport_t *t, void *buf, size_t n) {
 static ssize_t tls_write(transport_t *t, const void *buf, size_t n) {
     if (t->mode != TRANSPORT_TLS_ESTABLISHED) {
         int hr = do_handshake(t);
-        if (hr != 0) { errno = EAGAIN; return -1; }
+        if (hr != 0) {
+            errno = EAGAIN;
+            return -1;
+        }
     }
 
     tls_priv_t *priv = t->tls_ctx;
     int r = SSL_write(priv->ssl, buf, (int)n);
-    if (r > 0) return (ssize_t)r;
+    if (r > 0)
+        return (ssize_t)r;
 
     int err = SSL_get_error(priv->ssl, r);
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
@@ -128,7 +137,8 @@ static ssize_t tls_write(transport_t *t, const void *buf, size_t n) {
 /* vtable: handshake */
 
 static int tls_handshake(transport_t *t) {
-    if (t->mode == TRANSPORT_TLS_ESTABLISHED) return 0;
+    if (t->mode == TRANSPORT_TLS_ESTABLISHED)
+        return 0;
     return do_handshake(t);
 }
 
@@ -157,27 +167,24 @@ static void tls_close(transport_t *t) {
 
 /* Factory */
 
-transport_t *transport_tls_new(int fd, bool server_role,
-                               const char *cert, const char *key,
+transport_t *transport_tls_new(int fd, bool server_role, const char *cert, const char *key,
                                const char *ca_bundle) {
     /* OpenSSL 1.1+ auto-initialises; explicit init is a no-op but harmless */
-    OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS
-                   | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
+    OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
 
-    const SSL_METHOD *method = server_role
-                               ? TLS_server_method()
-                               : TLS_client_method();
+    const SSL_METHOD *method = server_role ? TLS_server_method() : TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
-    if (!ctx) { log_ssl_errors("SSL_CTX_new"); return NULL; }
+    if (!ctx) {
+        log_ssl_errors("SSL_CTX_new");
+        return NULL;
+    }
 
     /* Require TLS 1.2 minimum; 1.3 is negotiated if both sides support it */
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
 
     /* Disable old / weak ciphers */
-    SSL_CTX_set_options(ctx,
-        SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
-        SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 |
-        SSL_OP_CIPHER_SERVER_PREFERENCE);
+    SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 |
+                                 SSL_OP_NO_TLSv1_1 | SSL_OP_CIPHER_SERVER_PREFERENCE);
 
     if (server_role) {
         /* Server: must have cert + key */
@@ -207,8 +214,7 @@ transport_t *transport_tls_new(int fd, bool server_role,
                 SSL_CTX_free(ctx);
                 return NULL;
             }
-            SSL_CTX_set_verify(ctx,
-                SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
         }
     } else {
         /* Client: optionally verify server certificate */
@@ -260,12 +266,12 @@ transport_t *transport_tls_new(int fd, bool server_role,
         free(priv);
         return NULL;
     }
-    t->fd        = fd;
-    t->mode      = TRANSPORT_TLS_HANDSHAKE;
-    t->read      = tls_read;
-    t->write     = tls_write;
+    t->fd = fd;
+    t->mode = TRANSPORT_TLS_HANDSHAKE;
+    t->read = tls_read;
+    t->write = tls_write;
     t->handshake = tls_handshake;
-    t->close     = tls_close;
-    t->tls_ctx   = priv;
+    t->close = tls_close;
+    t->tls_ctx = priv;
     return t;
 }

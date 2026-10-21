@@ -78,7 +78,7 @@ def main() -> None:
             # and can be used in static struct initialisers in sound.c.
             fh.write(f"/* {name} — {len(data)} bytes */\n")
             fh.write(f"extern const uint8_t snd_{name}_data[];\n")
-            fh.write(f"#define              snd_{name}_size   {len(data)}U\n")
+            fh.write(f"#define snd_{name}_size {len(data)}U\n")
 
     # ── Source ─────────────────────────────────────────────────────────────
     with open(out_c, "w", encoding="utf-8", newline="\n") as fc:

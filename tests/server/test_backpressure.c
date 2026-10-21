@@ -1,13 +1,15 @@
 /* Backpressure must never truncate a frame already started on TCP. */
+#include "server/conn.h"
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "server/conn.h"
 
 static int calls;
+
 static ssize_t partial_write(transport_t *t, const void *buf, size_t length) {
-    if (!calls++) return 2000;
+    if (!calls++)
+        return 2000;
     errno = EAGAIN;
     return -1;
 }
@@ -22,7 +24,8 @@ static void clear(conn_t *c) {
     while (c->obuf_head) {
         obuf_node_t *node = c->obuf_head;
         c->obuf_head = node->next;
-        free(node->data); free(node);
+        free(node->data);
+        free(node);
     }
     c->obuf_tail = NULL;
     c->obuf_bytes = 0;

@@ -8,18 +8,18 @@
  *   model changes  -> UI redraws
  */
 
+#include <arpa/inet.h>
+#include <errno.h>
+#include <getopt.h>
+#include <ncurses.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>   /* strcasestr for mention detection */
-#include <unistd.h>
-#include <signal.h>
-#include <getopt.h>
-#include <poll.h>
-#include <errno.h>
+#include <strings.h> /* strcasestr for mention detection */
 #include <time.h>
-#include <arpa/inet.h>
-#include <ncurses.h>
+#include <unistd.h>
 
 #include "client/sound.h"
 
@@ -29,38 +29,46 @@ static void make_default_nick(char *buf, size_t bufsz) {
      * still get different numbers */
     unsigned seed = (unsigned)time(NULL) ^ ((unsigned)getpid() << 16);
     srand(seed);
-    int n = (rand() % 9000) + 1000;   /* 1000-9999 */
+    int n = (rand() % 9000) + 1000; /* 1000-9999 */
     snprintf(buf, bufsz, "guest%d", n);
 }
 
 #include "client/client_config.h"
 #include "client/client_conn.h"
+#include "client/history.h"
 #include "client/model.h"
 #include "client/ui.h"
-#include "client/history.h"
-#include "proto/types.h"
-#include "proto/tlv.h"
 #include "proto/frame.h"
+#include "proto/tlv.h"
+#include "proto/types.h"
 
 /* Signal helpers */
 
 static volatile int g_sigwinch = 0;
-static volatile int g_quit     = 0;
+static volatile int g_quit = 0;
 
-static void on_sigwinch(int s) { (void)s; g_sigwinch = 1; }
-static void on_sigint  (int s) { (void)s; g_quit     = 1; }
+static void on_sigwinch(int s) {
+    (void)s;
+    g_sigwinch = 1;
+}
+
+static void on_sigint(int s) {
+    (void)s;
+    g_quit = 1;
+}
 
 /* Config parsing */
 
 void client_config_usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s [options]\n"
-        "  --host HOST        Server hostname (default: 127.0.0.1)\n"
-        "  --port PORT        Server port    (default: 5555)\n"
-        "  --nick NICK        Your nickname  (default: guest)\n"
-        "  --tls              Use TLS connection\n"
-        "  --verbose          Debug output\n"
-        "  -h, --help\n", prog);
+            "Usage: %s [options]\n"
+            "  --host HOST        Server hostname (default: 127.0.0.1)\n"
+            "  --port PORT        Server port    (default: 5555)\n"
+            "  --nick NICK        Your nickname  (default: guest)\n"
+            "  --tls              Use TLS connection\n"
+            "  --verbose          Debug output\n"
+            "  -h, --help\n",
+            prog);
 }
 
 int client_config_parse(int argc, char **argv, client_config_t *cfg) {
@@ -70,24 +78,36 @@ int client_config_parse(int argc, char **argv, client_config_t *cfg) {
     make_default_nick(cfg->nick, sizeof(cfg->nick));
 
     static const struct option opts[] = {
-        {"host",    required_argument, NULL, 'H'},
-        {"port",    required_argument, NULL, 'p'},
-        {"nick",    required_argument, NULL, 'n'},
-        {"tls",     no_argument,       NULL, 't'},
-        {"verbose", no_argument,       NULL, 'v'},
-        {"help",    no_argument,       NULL, 'h'},
+        {"host", required_argument, NULL, 'H'},
+        {"port", required_argument, NULL, 'p'},
+        {"nick", required_argument, NULL, 'n'},
+        {"tls", no_argument, NULL, 't'},
+        {"verbose", no_argument, NULL, 'v'},
+        {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
     int c;
     while ((c = getopt_long(argc, argv, "h", opts, NULL)) != -1) {
         switch (c) {
-            case 'H': strncpy(cfg->host, optarg, sizeof(cfg->host)-1); break;
-            case 'p': cfg->port = (uint16_t)atoi(optarg); break;
-            case 'n': strncpy(cfg->nick, optarg, sizeof(cfg->nick)-1); break;
-            case 't': cfg->use_tls = true; break;
-            case 'v': cfg->verbose = true; break;
-            case 'h': return 1;
-            default:  return -1;
+            case 'H':
+                strncpy(cfg->host, optarg, sizeof(cfg->host) - 1);
+                break;
+            case 'p':
+                cfg->port = (uint16_t)atoi(optarg);
+                break;
+            case 'n':
+                strncpy(cfg->nick, optarg, sizeof(cfg->nick) - 1);
+                break;
+            case 't':
+                cfg->use_tls = true;
+                break;
+            case 'v':
+                cfg->verbose = true;
+                break;
+            case 'h':
+                return 1;
+            default:
+                return -1;
         }
     }
     return 0;
@@ -96,31 +116,30 @@ int client_config_parse(int argc, char **argv, client_config_t *cfg) {
 /* Frame handler (network -> model) */
 
 typedef struct {
-    cli_model_t   *model;
+    cli_model_t *model;
     client_conn_t *conn;
-    ui_state_t    *ui;
-    time_t        *last_users_refresh;
-    time_t        *last_rooms_refresh;
+    ui_state_t *ui;
+    time_t *last_users_refresh;
+    time_t *last_rooms_refresh;
 } frame_ctx_t;
 
 static void on_frame(const frame_t *f, void *ctx_ptr) {
-    frame_ctx_t *ctx   = ctx_ptr;
-    cli_model_t *m     = ctx->model;
-    client_conn_t *cc  = ctx->conn;
-    const uint8_t *p   = f->payload;
-    uint32_t       pl  = f->hdr.length;
+    frame_ctx_t *ctx = ctx_ptr;
+    cli_model_t *m = ctx->model;
+    client_conn_t *cc = ctx->conn;
+    const uint8_t *p = f->payload;
+    uint32_t pl = f->hdr.length;
 
     switch ((server_msg_t)f->hdr.type) {
 
         case SMSG_WELCOME: {
             uint32_t sid = 0;
-            tlv_read_u32(p, pl, TAG_SESSION_ID,  &sid);
-            tlv_read_str(p, pl, TAG_SERVER_NAME, m->server_name,
-                         sizeof(m->server_name));
-            tlv_read_str(p, pl, TAG_MOTD,        m->motd, sizeof(m->motd));
+            tlv_read_u32(p, pl, TAG_SESSION_ID, &sid);
+            tlv_read_str(p, pl, TAG_SERVER_NAME, m->server_name, sizeof(m->server_name));
+            tlv_read_str(p, pl, TAG_MOTD, m->motd, sizeof(m->motd));
             m->session_id = sid;
-            m->user_id    = sid;   /* our own UID for self-message detection */
-            m->status     = CLI_ONLINE;
+            m->user_id = sid; /* our own UID for self-message detection */
+            m->status = CLI_ONLINE;
             sound_play(SND_WELCOME);
             /* clear any stale history before auto-join */
             model_clear_room_msgs(m, "general");
@@ -133,7 +152,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 char *line = strtok_r(motd_copy, "\n", &saveptr);
                 while (line) {
                     model_push_system_msg(m, "general", line, motd_ts, MSG_SYSTEM);
-                    motd_ts += 1;   /* keep them in order */
+                    motd_ts += 1; /* keep them in order */
                     line = strtok_r(NULL, "\n", &saveptr);
                 }
             }
@@ -143,9 +162,9 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             /* optimistically track the join in the model */
             cli_room_t *gr = model_get_or_create_room(m, "general");
             if (gr) {
-                gr->joined     = true;
+                gr->joined = true;
                 m->active_room = (int)(gr - m->rooms);
-                m->active_dm   = -1;
+                m->active_dm = -1;
             }
             client_send_list_users(cc, "general");
             ctx->ui->nav_cursor = (m->active_room >= 0) ? m->active_room : 0;
@@ -158,7 +177,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             uint16_t code = 0;
             char msg[256] = {0};
             tlv_read_u16(p, pl, TAG_ERROR_CODE, &code);
-            tlv_read_str(p, pl, TAG_ERROR_MSG,  msg, sizeof(msg));
+            tlv_read_str(p, pl, TAG_ERROR_MSG, msg, sizeof(msg));
             model_set_status(m, msg, 5);
             ctx->ui->dirty = true;
             break;
@@ -168,38 +187,36 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_ROOM_HISTORY: {
             char room[65] = {0}, nick[33] = {0}, text[4097] = {0};
             char base_nick[33] = {0};
-            uint32_t uid = 0; uint64_t ts = 0;
-            tlv_read_str(p, pl, TAG_ROOM,      room, sizeof(room));
-            tlv_read_str(p, pl, TAG_NICK,      nick, sizeof(nick));
-            tlv_read_u32(p, pl, TAG_USER_ID,   &uid);
-            tlv_read_str(p, pl, TAG_TEXT,      text, sizeof(text));
+            uint32_t uid = 0;
+            uint64_t ts = 0;
+            tlv_read_str(p, pl, TAG_ROOM, room, sizeof(room));
+            tlv_read_str(p, pl, TAG_NICK, nick, sizeof(nick));
+            tlv_read_u32(p, pl, TAG_USER_ID, &uid);
+            tlv_read_str(p, pl, TAG_TEXT, text, sizeof(text));
             tlv_read_u64(p, pl, TAG_TIMESTAMP, &ts);
             tlv_read_str(p, pl, TAG_BASE_NICK, base_nick, sizeof(base_nick));
-            if (!ts) ts = (uint64_t)time(NULL) * 1000;
+            if (!ts)
+                ts = (uint64_t)time(NULL) * 1000;
             bool self = (uid == m->user_id);
             /* use our own base_nick for self-echo messages */
             const char *bn = self ? m->base_nick : base_nick;
             /* Detect CTCP ACTION:  \x01ACTION <text>\x01 */
-            if (text[0] == '\x01' &&
-                strncmp(text + 1, "ACTION ", 7) == 0) {
+            if (text[0] == '\x01' && strncmp(text + 1, "ACTION ", 7) == 0) {
                 /* strip wrapper: cut leading \x01ACTION  and trailing \x01 */
                 char action_text[4097];
                 size_t src_len = strlen(text);
-                size_t body_start = 8;   /* 1 + 7 */
-                size_t body_end   = (src_len > 0 && text[src_len-1] == '\x01')
-                                    ? src_len - 1 : src_len;
-                size_t body_len   = (body_end > body_start)
-                                    ? body_end - body_start : 0;
+                size_t body_start = 8; /* 1 + 7 */
+                size_t body_end =
+                    (src_len > 0 && text[src_len - 1] == '\x01') ? src_len - 1 : src_len;
+                size_t body_len = (body_end > body_start) ? body_end - body_start : 0;
                 if (body_len >= sizeof(action_text))
                     body_len = sizeof(action_text) - 1;
                 memcpy(action_text, text + body_start, body_len);
                 action_text[body_len] = '\0';
-                model_push_room_msg_typed(m, room, uid, nick,
-                                          bn, action_text, ts, self, MSG_ACTION,
+                model_push_room_msg_typed(m, room, uid, nick, bn, action_text, ts, self, MSG_ACTION,
                                           m->nick);
             } else {
-                model_push_room_msg(m, room, uid, nick, bn, text, ts, self,
-                                    m->nick);
+                model_push_room_msg(m, room, uid, nick, bn, text, ts, self, m->nick);
             }
             /* nick-mention highlight: sound + bell */
             if (!self && m->nick[0]) {
@@ -215,20 +232,22 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
 
         case SMSG_DM: {
             char sender_nick[33] = {0}, peer_nick[33] = {0}, text[4097] = {0};
-            uint32_t sender_uid = 0, peer_uid2 = 0; uint64_t ts = 0;
-            tlv_read_str(p, pl, TAG_NICK,      sender_nick, sizeof(sender_nick));
-            tlv_read_u32(p, pl, TAG_USER_ID,   &sender_uid);
-            tlv_read_str(p, pl, TAG_PEER_NICK, peer_nick,   sizeof(peer_nick));
-            tlv_read_u32(p, pl, TAG_PEER_UID,  &peer_uid2);
-            tlv_read_str(p, pl, TAG_TEXT,      text,        sizeof(text));
+            uint32_t sender_uid = 0, peer_uid2 = 0;
+            uint64_t ts = 0;
+            tlv_read_str(p, pl, TAG_NICK, sender_nick, sizeof(sender_nick));
+            tlv_read_u32(p, pl, TAG_USER_ID, &sender_uid);
+            tlv_read_str(p, pl, TAG_PEER_NICK, peer_nick, sizeof(peer_nick));
+            tlv_read_u32(p, pl, TAG_PEER_UID, &peer_uid2);
+            tlv_read_str(p, pl, TAG_TEXT, text, sizeof(text));
             tlv_read_u64(p, pl, TAG_TIMESTAMP, &ts);
-            if (!ts) ts = (uint64_t)time(NULL) * 1000;
+            if (!ts)
+                ts = (uint64_t)time(NULL) * 1000;
             bool self = (sender_uid == m->user_id);
             /* Both sender and receiver now know who the other party is:
              *   self==true  (echo):  peer = peer_nick / peer_uid2
              *   self==false (inbound): peer = sender_nick / sender_uid */
-            uint32_t   conv_uid  = self ? peer_uid2   : sender_uid;
-            const char *conv_nick = self ? peer_nick  : sender_nick;
+            uint32_t conv_uid = self ? peer_uid2 : sender_uid;
+            const char *conv_nick = self ? peer_nick : sender_nick;
             /* Check if this is the first message in this DM conversation */
             bool is_first_msg = false;
             if (!self) {
@@ -242,7 +261,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 is_first_msg = (!existing_dm || existing_dm->msgs_len == 0);
             }
             model_push_dm_msg(m, conv_uid, conv_nick, text, ts, self);
-            if (!self && is_first_msg) sound_play(SND_DM);
+            if (!self && is_first_msg)
+                sound_play(SND_DM);
             ctx->ui->dirty = true;
             break;
         }
@@ -250,14 +270,15 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_USER_JOINED: {
             char room[65] = {0}, nick[33] = {0};
             uint32_t uid = 0;
-            tlv_read_str(p, pl, TAG_ROOM,    room, sizeof(room));
-            tlv_read_str(p, pl, TAG_NICK,    nick, sizeof(nick));
+            tlv_read_str(p, pl, TAG_ROOM, room, sizeof(room));
+            tlv_read_str(p, pl, TAG_NICK, nick, sizeof(nick));
             tlv_read_u32(p, pl, TAG_USER_ID, &uid);
             char info[128];
             snprintf(info, sizeof(info), "%s joined #%s", nick, room);
-            model_push_system_msg(m, room, info, (uint64_t)time(NULL)*1000, MSG_JOIN);
+            model_push_system_msg(m, room, info, (uint64_t)time(NULL) * 1000, MSG_JOIN);
             /* BuddyIn sound for others joining (suppress for our own join echo) */
-            if (uid != m->user_id) sound_play(SND_BUDDY_IN);
+            if (uid != m->user_id)
+                sound_play(SND_BUDDY_IN);
             /* refresh user list if this is the active room */
             if (m->active_room >= 0 && m->active_room < m->room_count &&
                 strcmp(m->rooms[m->active_room].name, room) == 0) {
@@ -279,7 +300,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_str(p, pl, TAG_NICK, nick, sizeof(nick));
             char info[128];
             snprintf(info, sizeof(info), "%s left #%s", nick, room);
-            model_push_system_msg(m, room, info, (uint64_t)time(NULL)*1000, MSG_PART);
+            model_push_system_msg(m, room, info, (uint64_t)time(NULL) * 1000, MSG_PART);
             sound_play(SND_BUDDY_OUT);
             /* refresh user list if this is the active room */
             if (m->active_room >= 0 && m->active_room < m->room_count &&
@@ -294,8 +315,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_USER_AWAY: {
             char nick[33] = {0}, away_msg[256] = {0};
             uint32_t uid = 0;
-            tlv_read_str(p, pl, TAG_NICK,     nick,     sizeof(nick));
-            tlv_read_u32(p, pl, TAG_USER_ID,  &uid);
+            tlv_read_str(p, pl, TAG_NICK, nick, sizeof(nick));
+            tlv_read_u32(p, pl, TAG_USER_ID, &uid);
             tlv_read_str(p, pl, TAG_AWAY_MSG, away_msg, sizeof(away_msg));
             bool going_away = (away_msg[0] != '\0');
             /* update our own model when the server echoes our own away state */
@@ -312,8 +333,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             for (int i = 0; i < m->room_count; i++) {
                 /* only post in rooms we are actually a member of */
                 if (m->rooms[i].active && m->rooms[i].joined)
-                    model_push_system_msg(m, m->rooms[i].name, info,
-                                         (uint64_t)time(NULL)*1000, MSG_SYSTEM);
+                    model_push_system_msg(m, m->rooms[i].name, info, (uint64_t)time(NULL) * 1000,
+                                          MSG_SYSTEM);
             }
             ctx->ui->dirty = true;
             break;
@@ -323,10 +344,11 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             /* another client created a room -  add it to our list */
             char name[65] = {0};
             uint32_t owner = 0;
-            tlv_read_str(p, pl, TAG_ROOM,      name,  sizeof(name));
+            tlv_read_str(p, pl, TAG_ROOM, name, sizeof(name));
             tlv_read_u32(p, pl, TAG_OWNER_UID, &owner);
             cli_room_t *nr = model_get_or_create_room(m, name);
-            if (nr) nr->owner_uid = owner;
+            if (nr)
+                nr->owner_uid = owner;
             ctx->ui->dirty = true;
             break;
         }
@@ -336,7 +358,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_str(p, pl, TAG_ROOM, name, sizeof(name));
             model_remove_room(m, name);
             ctx->ui->nav_cursor = m->active_room >= 0 ? m->active_room
-                : m->active_dm >= 0 ? m->room_count + m->active_dm : -1;
+                                  : m->active_dm >= 0 ? m->room_count + m->active_dm
+                                                      : -1;
             ui_clamp_navigation(ctx->ui, m);
             char sb[80];
             snprintf(sb, sizeof(sb), "Room #%.60s was deleted", name);
@@ -348,7 +371,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_ROOM_LIST: {
             /* iterate TAG_ROOM / TAG_OWNER_UID pairs */
             tlv_reader_t r;
-            tlv_field_t  fld;
+            tlv_field_t fld;
             tlv_reader_init(&r, p, pl);
             char pending_name[65] = {0};
             while (tlv_reader_next(&r, &fld)) {
@@ -357,14 +380,16 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                     memset(pending_name, 0, sizeof(pending_name));
                     memcpy(pending_name, fld.val, l);
                     model_get_or_create_room(m, pending_name);
-                } else if (fld.tag == TAG_OWNER_UID && fld.len >= 4 &&
-                           pending_name[0]) {
-                    uint32_t ow; memcpy(&ow, fld.val, 4);
+                } else if (fld.tag == TAG_OWNER_UID && fld.len >= 4 && pending_name[0]) {
+                    uint32_t ow;
+                    memcpy(&ow, fld.val, 4);
                     cli_room_t *rr = model_find_room(m, pending_name);
-                    if (rr) rr->owner_uid = ntohl(ow);
+                    if (rr)
+                        rr->owner_uid = ntohl(ow);
                 }
             }
-            if (m->active_room < 0 && m->active_dm < 0) model_select_fallback(m);
+            if (m->active_room < 0 && m->active_dm < 0)
+                model_select_fallback(m);
             ctx->ui->dirty = true;
             break;
         }
@@ -373,7 +398,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             cli_user_t tmp[CLI_MAX_USERS];
             int count = 0;
             tlv_reader_t r;
-            tlv_field_t  fld;
+            tlv_field_t fld;
             tlv_reader_init(&r, p, pl);
             char pending_nick[33] = {0};
             while (tlv_reader_next(&r, &fld) && count < CLI_MAX_USERS) {
@@ -382,7 +407,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                     memcpy(pending_nick, fld.val, l);
                     pending_nick[l] = '\0';
                 } else if (fld.tag == TAG_USER_ID && fld.len >= 4) {
-                    uint32_t uid; memcpy(&uid, fld.val, 4);
+                    uint32_t uid;
+                    memcpy(&uid, fld.val, 4);
                     tmp[count].user_id = ntohl(uid);
                     snprintf(tmp[count].nick, sizeof(tmp[count].nick), "%s", pending_nick);
                     count++;
@@ -402,19 +428,17 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             char new_nick[33] = {0}, old_nick[33] = {0}, room[65] = {0};
             char base_nick[33] = {0};
             uint32_t uid = 0;
-            tlv_read_str(p, pl, TAG_NICK,      new_nick,  sizeof(new_nick));
-            tlv_read_str(p, pl, TAG_OLD_NICK,  old_nick,  sizeof(old_nick));
-            tlv_read_str(p, pl, TAG_ROOM,      room,      sizeof(room));
-            tlv_read_u32(p, pl, TAG_USER_ID,   &uid);
+            tlv_read_str(p, pl, TAG_NICK, new_nick, sizeof(new_nick));
+            tlv_read_str(p, pl, TAG_OLD_NICK, old_nick, sizeof(old_nick));
+            tlv_read_str(p, pl, TAG_ROOM, room, sizeof(room));
+            tlv_read_u32(p, pl, TAG_USER_ID, &uid);
             tlv_read_str(p, pl, TAG_BASE_NICK, base_nick, sizeof(base_nick));
 
             if (room[0]) {
                 /* room broadcast: other users see the rename */
                 char info[128];
-                snprintf(info, sizeof(info), "%.32s is now known as %.32s",
-                         old_nick, new_nick);
-                model_push_system_msg(m, room, info,
-                                      (uint64_t)time(NULL)*1000, MSG_SYSTEM);
+                snprintf(info, sizeof(info), "%.32s is now known as %.32s", old_nick, new_nick);
+                model_push_system_msg(m, room, info, (uint64_t)time(NULL) * 1000, MSG_SYSTEM);
                 /* refresh user list so the sidebar reflects the new name */
                 if (m->active_room >= 0 && m->active_room < m->room_count &&
                     strcmp(m->rooms[m->active_room].name, room) == 0) {
@@ -427,9 +451,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 if (uid) {
                     for (int i = 0; i < m->dm_count; i++) {
                         if (m->dms[i].peer_uid == uid)
-                            snprintf(m->dms[i].peer_nick,
-                                     sizeof(m->dms[i].peer_nick),
-                                     "%s", new_nick);
+                            snprintf(m->dms[i].peer_nick, sizeof(m->dms[i].peer_nick), "%s",
+                                     new_nick);
                     }
                 }
             } else {
@@ -438,12 +461,11 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 /* base_nick stays unchanged -  it's the account/original name */
                 /* push the rename notice into all our joined rooms */
                 char info[128];
-                snprintf(info, sizeof(info), "%.32s is now known as %.32s",
-                         old_nick, new_nick);
+                snprintf(info, sizeof(info), "%.32s is now known as %.32s", old_nick, new_nick);
                 for (int i = 0; i < m->room_count; i++) {
                     if (m->rooms[i].active && m->rooms[i].joined)
                         model_push_system_msg(m, m->rooms[i].name, info,
-                                              (uint64_t)time(NULL)*1000, MSG_SYSTEM);
+                                              (uint64_t)time(NULL) * 1000, MSG_SYSTEM);
                 }
                 char sb[80];
                 snprintf(sb, sizeof(sb), "You are now known as %.32s", new_nick);
@@ -456,11 +478,12 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_REGISTER_OK: {
             char new_nick[33] = {0};
             uint32_t uid = 0;
-            tlv_read_str(p, pl, TAG_NICK,    new_nick, sizeof(new_nick));
+            tlv_read_str(p, pl, TAG_NICK, new_nick, sizeof(new_nick));
             tlv_read_u32(p, pl, TAG_USER_ID, &uid);
-            snprintf(m->nick,      sizeof(m->nick),      "%s", new_nick);
+            snprintf(m->nick, sizeof(m->nick), "%s", new_nick);
             snprintf(m->base_nick, sizeof(m->base_nick), "%s", new_nick);
-            if (uid) m->user_id = uid;
+            if (uid)
+                m->user_id = uid;
             char sb[80];
             snprintf(sb, sizeof(sb), "Registered & logged in as %.32s", new_nick);
             model_set_status(m, sb, 8);
@@ -471,11 +494,12 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_LOGIN_OK: {
             char new_nick[33] = {0};
             uint32_t uid = 0;
-            tlv_read_str(p, pl, TAG_NICK,    new_nick, sizeof(new_nick));
+            tlv_read_str(p, pl, TAG_NICK, new_nick, sizeof(new_nick));
             tlv_read_u32(p, pl, TAG_USER_ID, &uid);
-            snprintf(m->nick,      sizeof(m->nick),      "%s", new_nick);
+            snprintf(m->nick, sizeof(m->nick), "%s", new_nick);
             snprintf(m->base_nick, sizeof(m->base_nick), "%s", new_nick);
-            if (uid) m->user_id = uid;
+            if (uid)
+                m->user_id = uid;
             char sb[80];
             snprintf(sb, sizeof(sb), "Logged in as %.32s", new_nick);
             model_set_status(m, sb, 8);
@@ -486,7 +510,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_LOGOUT_OK: {
             char guest_nick[33] = {0};
             tlv_read_str(p, pl, TAG_NICK, guest_nick, sizeof(guest_nick));
-            snprintf(m->nick,      sizeof(m->nick),      "%s", guest_nick);
+            snprintf(m->nick, sizeof(m->nick), "%s", guest_nick);
             snprintf(m->base_nick, sizeof(m->base_nick), "%s", guest_nick);
             model_set_status(m, "Logged out - back to guest session", 6);
             ctx->ui->dirty = true;
@@ -495,21 +519,19 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
 
         case SMSG_ROOM_TOPIC: {
             char room[65] = {0}, topic[257] = {0}, setter[33] = {0};
-            tlv_read_str(p, pl, TAG_ROOM,  room,   sizeof(room));
-            tlv_read_str(p, pl, TAG_TOPIC, topic,  sizeof(topic));
-            tlv_read_str(p, pl, TAG_NICK,  setter, sizeof(setter));
+            tlv_read_str(p, pl, TAG_ROOM, room, sizeof(room));
+            tlv_read_str(p, pl, TAG_TOPIC, topic, sizeof(topic));
+            tlv_read_str(p, pl, TAG_NICK, setter, sizeof(setter));
             cli_room_t *tr = model_find_room(m, room);
             if (tr) {
-                snprintf(tr->topic,        sizeof(tr->topic),        "%s", topic);
+                snprintf(tr->topic, sizeof(tr->topic), "%s", topic);
                 snprintf(tr->topic_set_by, sizeof(tr->topic_set_by), "%s", setter);
             }
             /* emit a system message only when someone actively set the topic */
             if (setter[0] && topic[0]) {
                 char info[320];
-                snprintf(info, sizeof(info), "%.32s set the topic: %.200s",
-                         setter, topic);
-                model_push_system_msg(m, room, info,
-                                     (uint64_t)time(NULL)*1000, MSG_SYSTEM);
+                snprintf(info, sizeof(info), "%.32s set the topic: %.200s", setter, topic);
+                model_push_system_msg(m, room, info, (uint64_t)time(NULL) * 1000, MSG_SYSTEM);
             }
             ctx->ui->dirty = true;
             break;
@@ -529,7 +551,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             cli_room_t *tr = model_find_room(m, room);
             if (tr) {
                 snprintf(tr->typing_nick, sizeof(tr->typing_nick), "%s", nick);
-                tr->typing_until = time(NULL) + 3;  /* show for 3 seconds */
+                tr->typing_until = time(NULL) + 3; /* show for 3 seconds */
                 ctx->ui->dirty = true;
             }
             break;
@@ -545,21 +567,23 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
 static void close_active_chat(cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
     if (m->active_room >= 0 && m->active_room < m->room_count) {
         cli_room_t *room = &m->rooms[m->active_room];
-        if (room->joined) client_send_leave(cc, room->name);
+        if (room->joined)
+            client_send_leave(cc, room->name);
         room->joined = false;
         model_select_fallback(m);
         model_set_status(m, "Room left. Select it again to rejoin.", 4);
     } else if (model_close_dm(m, m->active_dm)) {
         model_set_status(m, "DM conversation closed", 3);
-    } else model_set_status(m, "No active chat to close", 3);
+    } else
+        model_set_status(m, "No active chat to close", 3);
     ui->nav_cursor = m->active_room >= 0 ? m->active_room
-        : m->active_dm >= 0 ? m->room_count + m->active_dm : -1;
+                     : m->active_dm >= 0 ? m->room_count + m->active_dm
+                                         : -1;
     ui_clamp_navigation(ui, m);
     ui->dirty = true;
 }
 
-static void handle_command(const char *line, cli_model_t *m,
-                            client_conn_t *cc, ui_state_t *ui) {
+static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
     /* skip leading '/' */
     const char *cmd = line + 1;
 
@@ -593,26 +617,28 @@ static void handle_command(const char *line, cli_model_t *m,
         }
     } else if (strncmp(cmd, "join ", 5) == 0) {
         const char *room = cmd + 5;
-        while (*room == ' ') room++;   /* strip accidental leading spaces */
+        while (*room == ' ')
+            room++; /* strip accidental leading spaces */
         if (!*room) {
             model_set_status(m, "Usage: /join <roomname>", 4);
         } else {
-        /* Rejoining requests a replay; selecting a joined room keeps its buffer. */
-        cli_room_t *existing = model_find_room(m, room);
-        if (!existing || !existing->joined) {
-            model_clear_room_msgs(m, room);
-            client_send_join(cc, room);
-        }
-        cli_room_t *r = model_get_or_create_room(m, room);
-        if (r) {
-            r->joined = true;
-            m->active_room = (int)(r - m->rooms);
-            m->active_dm   = -1;
-            ui->nav_cursor = m->active_room;
-        }
-        client_send_list_users(cc, room);
-        char sb[80]; snprintf(sb, sizeof(sb), "Joining #%.60s...", room);
-        model_set_status(m, sb, 4);
+            /* Rejoining requests a replay; selecting a joined room keeps its buffer. */
+            cli_room_t *existing = model_find_room(m, room);
+            if (!existing || !existing->joined) {
+                model_clear_room_msgs(m, room);
+                client_send_join(cc, room);
+            }
+            cli_room_t *r = model_get_or_create_room(m, room);
+            if (r) {
+                r->joined = true;
+                m->active_room = (int)(r - m->rooms);
+                m->active_dm = -1;
+                ui->nav_cursor = m->active_room;
+            }
+            client_send_list_users(cc, room);
+            char sb[80];
+            snprintf(sb, sizeof(sb), "Joining #%.60s...", room);
+            model_set_status(m, sb, 4);
         }
     } else if (strncmp(cmd, "leave", 5) == 0) {
         const char *room = (strlen(cmd) > 6) ? cmd + 6 : "";
@@ -621,8 +647,10 @@ static void handle_command(const char *line, cli_model_t *m,
         if (*room) {
             client_send_leave(cc, room);
             cli_room_t *left = model_find_room(m, room);
-            if (left) left->joined = false;
-            char sb[80]; snprintf(sb, sizeof(sb), "Left #%.64s", room);
+            if (left)
+                left->joined = false;
+            char sb[80];
+            snprintf(sb, sizeof(sb), "Left #%.64s", room);
             model_set_status(m, sb, 4);
             if (left && m->active_room >= 0 && left == &m->rooms[m->active_room])
                 model_select_fallback(m);
@@ -661,7 +689,8 @@ static void handle_command(const char *line, cli_model_t *m,
     } else if (strncmp(cmd, "nick ", 5) == 0) {
         /* /nick <newnick> */
         const char *new_nick = cmd + 5;
-        while (*new_nick == ' ') new_nick++;
+        while (*new_nick == ' ')
+            new_nick++;
         if (*new_nick) {
             client_send_nick(cc, new_nick);
             model_set_status(m, "Changing nick...", 3);
@@ -671,12 +700,15 @@ static void handle_command(const char *line, cli_model_t *m,
     } else if (strncmp(cmd, "away", 4) == 0) {
         /* /away [message]  -  set away with optional message */
         const char *msg = (strlen(cmd) > 5) ? cmd + 5 : "away";
-        while (*msg == ' ') msg++;
-        if (!*msg) msg = "away";
+        while (*msg == ' ')
+            msg++;
+        if (!*msg)
+            msg = "away";
         client_send_away(cc, msg);
         m->is_away = true;
         snprintf(m->away_msg, sizeof(m->away_msg), "%.255s", msg);
-        char sb[300]; snprintf(sb, sizeof(sb), "Away: %.255s", msg);
+        char sb[300];
+        snprintf(sb, sizeof(sb), "Away: %.255s", msg);
         model_set_status(m, sb, 5);
     } else if (strcmp(cmd, "back") == 0) {
         /* /back  -  return from away */
@@ -684,12 +716,12 @@ static void handle_command(const char *line, cli_model_t *m,
         m->is_away = false;
         m->away_msg[0] = '\0';
         model_set_status(m, "You are no longer away", 4);
-    } else if (strncmp(cmd, "ignore", 6) == 0 &&
-               (cmd[6] == ' ' || cmd[6] == '\0')) {
+    } else if (strncmp(cmd, "ignore", 6) == 0 && (cmd[6] == ' ' || cmd[6] == '\0')) {
         /* /ignore           -  list ignored nicks
          * /ignore <nick>    -  add nick to ignore list */
         const char *nick = (cmd[6] == ' ') ? cmd + 7 : "";
-        while (*nick == ' ') nick++;
+        while (*nick == ' ')
+            nick++;
         if (!*nick) {
             /* list current ignores */
             if (m->ignore_count == 0) {
@@ -697,7 +729,8 @@ static void handle_command(const char *line, cli_model_t *m,
             } else {
                 char sb[256] = "Ignoring: ";
                 for (int i = 0; i < m->ignore_count; i++) {
-                    if (i) strncat(sb, ", ", sizeof(sb) - strlen(sb) - 1);
+                    if (i)
+                        strncat(sb, ", ", sizeof(sb) - strlen(sb) - 1);
                     strncat(sb, m->ignore_list[i], sizeof(sb) - strlen(sb) - 1);
                 }
                 model_set_status(m, sb, 6);
@@ -711,16 +744,17 @@ static void handle_command(const char *line, cli_model_t *m,
                     goto ignore_done;
                 }
             }
-            snprintf(m->ignore_list[m->ignore_count++],
-                     CLI_NICK_MAX, "%.32s", nick);
-            char sb[80]; snprintf(sb, sizeof(sb), "Now ignoring %.32s", nick);
+            snprintf(m->ignore_list[m->ignore_count++], CLI_NICK_MAX, "%.32s", nick);
+            char sb[80];
+            snprintf(sb, sizeof(sb), "Now ignoring %.32s", nick);
             model_set_status(m, sb, 5);
-            ignore_done:;
+        ignore_done:;
         }
     } else if (strncmp(cmd, "unignore ", 9) == 0) {
         /* /unignore <nick> */
         const char *nick = cmd + 9;
-        while (*nick == ' ') nick++;
+        while (*nick == ' ')
+            nick++;
         bool found = false;
         for (int i = 0; i < m->ignore_count; i++) {
             if (strcasecmp(m->ignore_list[i], nick) == 0) {
@@ -732,7 +766,8 @@ static void handle_command(const char *line, cli_model_t *m,
             }
         }
         if (found) {
-            char sb[80]; snprintf(sb, sizeof(sb), "No longer ignoring %.32s", nick);
+            char sb[80];
+            snprintf(sb, sizeof(sb), "No longer ignoring %.32s", nick);
             model_set_status(m, sb, 5);
         } else {
             model_set_status(m, "Nick not in ignore list", 3);
@@ -746,7 +781,8 @@ static void handle_command(const char *line, cli_model_t *m,
             size_t l = (size_t)(sp - rest) < 32 ? (size_t)(sp - rest) : 32;
             memcpy(target, rest, l);
             client_send_dm(cc, target, sp + 1);
-            char sb[80]; snprintf(sb, sizeof(sb), "DM sent to @%s", target);
+            char sb[80];
+            snprintf(sb, sizeof(sb), "DM sent to @%s", target);
             model_set_status(m, sb, 4);
         } else {
             model_set_status(m, "Usage: /dm <nick> <message>", 4);
@@ -758,7 +794,8 @@ static void handle_command(const char *line, cli_model_t *m,
             room = m->rooms[m->active_room].name;
         if (*room) {
             client_send_delete_room(cc, room);
-            char sb[80]; snprintf(sb, sizeof(sb), "Deleting #%.60s...", room);
+            char sb[80];
+            snprintf(sb, sizeof(sb), "Deleting #%.60s...", room);
             model_set_status(m, sb, 4);
         } else {
             model_set_status(m, "Usage: /delroom <name>", 4);
@@ -766,15 +803,20 @@ static void handle_command(const char *line, cli_model_t *m,
     } else if (strcmp(cmd, "close") == 0) {
         close_active_chat(m, cc, ui);
     } else if (strcmp(cmd, "latest") == 0) {
-        if (m->active_room >= 0) m->rooms[m->active_room].scroll_offset = 0;
-        else if (m->active_dm >= 0) m->dms[m->active_dm].scroll_offset = 0;
+        if (m->active_room >= 0)
+            m->rooms[m->active_room].scroll_offset = 0;
+        else if (m->active_dm >= 0)
+            m->dms[m->active_dm].scroll_offset = 0;
     } else if (strncmp(cmd, "closedm", 7) == 0) {
         const char *nick = (strlen(cmd) > 8) ? cmd + 8 : "";
         int index = m->active_dm;
         if (*nick) {
             index = -1;
             for (int i = 0; i < m->dm_count; i++)
-                if (!strcmp(m->dms[i].peer_nick, nick)) { index = i; break; }
+                if (!strcmp(m->dms[i].peer_nick, nick)) {
+                    index = i;
+                    break;
+                }
         }
         bool closed = model_close_dm(m, index);
         model_set_status(m, closed ? "DM conversation closed" : "No matching DM to close", 3);
@@ -806,8 +848,14 @@ static void handle_command(const char *line, cli_model_t *m,
 int main(int argc, char **argv) {
     client_config_t cfg;
     int rc = client_config_parse(argc, argv, &cfg);
-    if (rc == 1)  { client_config_usage(argv[0]); return 0; }
-    if (rc == -1) { client_config_usage(argv[0]); return 1; }
+    if (rc == 1) {
+        client_config_usage(argv[0]);
+        return 0;
+    }
+    if (rc == -1) {
+        client_config_usage(argv[0]);
+        return 1;
+    }
 
     /* connect */
     client_conn_t cc;
@@ -821,7 +869,7 @@ int main(int argc, char **argv) {
     cli_model_t model;
     model_init(&model);
     model.status = CLI_CONNECTING;
-    snprintf(model.nick,      sizeof(model.nick),      "%s", cfg.nick);
+    snprintf(model.nick, sizeof(model.nick), "%s", cfg.nick);
     snprintf(model.base_nick, sizeof(model.base_nick), "%s", cfg.nick);
 
     /* init sounds (relative to CWD where the binary is run from) */
@@ -839,16 +887,15 @@ int main(int argc, char **argv) {
     ui_init(&ui);
 
     signal(SIGWINCH, on_sigwinch);
-    signal(SIGINT,   on_sigint);
-    signal(SIGTERM,  on_sigint);
-    signal(SIGPIPE,  SIG_IGN);
+    signal(SIGINT, on_sigint);
+    signal(SIGTERM, on_sigint);
+    signal(SIGPIPE, SIG_IGN);
 
     time_t last_users_refresh = 0;
-    time_t last_typing_sent   = 0;   /* throttle CMSG_TYPING to once per 2s */
+    time_t last_typing_sent = 0; /* throttle CMSG_TYPING to once per 2s */
     time_t last_rooms_refresh = 0;
 
-    frame_ctx_t fctx = {&model, &cc, &ui,
-                        &last_users_refresh, &last_rooms_refresh};
+    frame_ctx_t fctx = {&model, &cc, &ui, &last_users_refresh, &last_rooms_refresh};
 
     char input_line[4096];
 
@@ -862,10 +909,11 @@ int main(int argc, char **argv) {
             ui_redraw(&ui, &model);
 
         struct pollfd pfd = {.fd = cc.fd, .events = POLLIN};
-        int pr = poll(&pfd, 1, 50);   /* 50ms timeout for keyboard */
+        int pr = poll(&pfd, 1, 50); /* 50ms timeout for keyboard */
 
         if (pr < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR)
+                continue;
             model_set_status(&model, "poll() error", 5);
             break;
         }
@@ -873,7 +921,7 @@ int main(int argc, char **argv) {
         if (pfd.revents & (POLLHUP | POLLERR)) {
             model_set_status(&model, "Server disconnected", 999);
             model.status = CLI_DISCONNECTED;
-            ui.dirty     = true;
+            ui.dirty = true;
             /* Redraw the disconnect notice, then break.
              * Reconnect support is not implemented; exit cleanly. */
             ui_redraw(&ui, &model);
@@ -893,11 +941,11 @@ int main(int argc, char **argv) {
                  * server sent (e.g. "nick already in use") intact so the
                  * user knows why they were disconnected. */
                 model.status = CLI_DISCONNECTED;
-                ui.dirty     = true;
+                ui.dirty = true;
                 /* Redraw the final state (disconnect notice) before exiting
                  * the loop.  Without this the user sees a blank last frame. */
                 ui_redraw(&ui, &model);
-                break;  /* stop spinning on a closed socket */
+                break; /* stop spinning on a closed socket */
             }
         }
 
@@ -905,16 +953,30 @@ int main(int argc, char **argv) {
         int kr;
         while ((kr = ui_input_tick(&ui, &model, input_line, sizeof(input_line))) != ERR) {
             ui_clamp_navigation(&ui, &model);
-            if (kr == UI_RESIZE) { ui_resize(&ui); continue; }
-            if (kr == UI_QUIT) { g_quit = 1; break; }
-            if (kr == UI_CLOSE) { close_active_chat(&model, &cc, &ui); continue; }
+            if (kr == UI_RESIZE) {
+                ui_resize(&ui);
+                continue;
+            }
+            if (kr == UI_QUIT) {
+                g_quit = 1;
+                break;
+            }
+            if (kr == UI_CLOSE) {
+                close_active_chat(&model, &cc, &ui);
+                continue;
+            }
             if (kr == UI_LATEST) {
-                if (model.active_room >= 0) model.rooms[model.active_room].scroll_offset = 0;
-                else if (model.active_dm >= 0) model.dms[model.active_dm].scroll_offset = 0;
+                if (model.active_room >= 0)
+                    model.rooms[model.active_room].scroll_offset = 0;
+                else if (model.active_dm >= 0)
+                    model.dms[model.active_dm].scroll_offset = 0;
                 ui.dirty = true;
                 continue;
             }
-            if (kr == UI_SCROLL) { ui_scroll(&ui, &model, ui.scroll_delta); continue; }
+            if (kr == UI_SCROLL) {
+                ui_scroll(&ui, &model, ui.scroll_delta);
+                continue;
+            }
 
             if (kr == UI_LINE) {
                 /* Enter: command or message */
@@ -926,8 +988,7 @@ int main(int argc, char **argv) {
                         client_send_room_msg(&cc, room, input_line);
                         /* snap to bottom so the echo is visible */
                         model.rooms[model.active_room].scroll_offset = 0;
-                    } else if (model.active_dm >= 0 &&
-                               model.active_dm < model.dm_count) {
+                    } else if (model.active_dm >= 0 && model.active_dm < model.dm_count) {
                         const char *peer = model.dms[model.active_dm].peer_nick;
                         client_send_dm(&cc, peer, input_line);
                         model.dms[model.active_dm].scroll_offset = 0;
@@ -939,9 +1000,7 @@ int main(int argc, char **argv) {
             } else if (kr == UI_NONE) {
                 /* regular keystroke -  send typing notification (throttled) */
                 time_t now = time(NULL);
-                if (model.status == CLI_ONLINE &&
-                    model.active_room >= 0 &&
-                    ui.input_len > 0 &&
+                if (model.status == CLI_ONLINE && model.active_room >= 0 && ui.input_len > 0 &&
                     now - last_typing_sent >= 2) {
                     const char *room = model.rooms[model.active_room].name;
                     client_send_typing(&cc, room);
@@ -950,12 +1009,14 @@ int main(int argc, char **argv) {
             } else if (kr == UI_PAGE_UP) {
                 /* PgUp -  scroll up one full page */
                 int page = ui.layout.chat_h - 2;
-                if (page < 3) page = 3;
+                if (page < 3)
+                    page = 3;
                 ui_scroll(&ui, &model, page);
             } else if (kr == UI_PAGE_DOWN) {
                 /* PgDn -  scroll down one full page */
                 int page = ui.layout.chat_h - 2;
-                if (page < 3) page = 3;
+                if (page < 3)
+                    page = 3;
                 ui_scroll(&ui, &model, -page);
             } else if (kr == UI_SELECT) {
                 /* nav-enter: switch to / join the room or DM at nav_cursor */
@@ -968,13 +1029,12 @@ int main(int argc, char **argv) {
                         model.rooms[nc].joined = true;
                     }
                     model.active_room = nc;
-                    model.active_dm   = -1;
+                    model.active_dm = -1;
                     client_send_list_users(&cc, rname);
                     last_users_refresh = time(NULL);
-                } else if (nc >= model.room_count &&
-                           nc < model.room_count + model.dm_count) {
+                } else if (nc >= model.room_count && nc < model.room_count + model.dm_count) {
                     model.active_room = -1;
-                    model.active_dm   = nc - model.room_count;
+                    model.active_dm = nc - model.room_count;
                 }
                 ui.dirty = true;
             }
@@ -984,8 +1044,7 @@ int main(int argc, char **argv) {
         time_t now = time(NULL);
         if (model.status == CLI_ONLINE) {
             /* user list: every 15 s for the active room */
-            if (model.active_room >= 0 &&
-                now - last_users_refresh >= 15) {
+            if (model.active_room >= 0 && now - last_users_refresh >= 15) {
                 client_send_list_users(&cc, model.rooms[model.active_room].name);
                 last_users_refresh = now;
             }
@@ -1001,14 +1060,15 @@ int main(int argc, char **argv) {
                 cli_room_t *tr = &model.rooms[i];
                 if (tr->typing_nick[0] && now >= tr->typing_until) {
                     tr->typing_nick[0] = '\0';
-                    if (i == model.active_room) ui.dirty = true;
+                    if (i == model.active_room)
+                        ui.dirty = true;
                 }
             }
         }
     }
 
     ui_free(&ui);
-    sound_play_sync(SND_GOODBYE);   /* plays to completion before teardown */
+    sound_play_sync(SND_GOODBYE); /* plays to completion before teardown */
     client_disconnect(&cc);
     model_free(&model);
     return 0;

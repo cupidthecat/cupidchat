@@ -1,8 +1,9 @@
 /* CupidChat public interface. */
 #pragma once
+#include "proto/types.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include "proto/types.h"
+
 typedef struct {
     char host[256], nick[MAX_NICK_LEN + 1];
     uint16_t port;
