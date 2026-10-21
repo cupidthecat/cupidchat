@@ -19,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "proto/types.h"
 #include "server/db.h"
 #include "server/log.h"
 
@@ -69,7 +70,12 @@ static const char SCHEMA[] = "CREATE TABLE IF NOT EXISTS rooms ("
                              "  created_at    INTEGER NOT NULL"
                              ");"
                              "CREATE INDEX IF NOT EXISTS idx_users_username"
-                             "  ON users(username COLLATE NOCASE);";
+                             "  ON users(username COLLATE NOCASE);"
+                             "CREATE TABLE IF NOT EXISTS buddies ("
+                             " owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+                             " buddy_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+                             " PRIMARY KEY(owner_id, buddy_id), CHECK(owner_id != buddy_id)"
+                             ");";
 
 /* Rooms that are always present in a fresh installation. */
 static const char *DEFAULT_ROOMS[] = {"general", "random", NULL};
@@ -429,4 +435,74 @@ bool db_register_user(cupid_db_t *db, const char *username, const char *password
 
 bool db_authenticate_user(cupid_db_t *db, const char *username, const char *password) {
     return db_authenticate_account(db, username, password) != 0;
+}
+
+int db_account_name(cupid_db_t *db, uint64_t account, char *name, int capacity) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db->handle, "SELECT username FROM users WHERE id=?", -1, &stmt, NULL) !=
+        SQLITE_OK)
+        return -1;
+    sqlite3_bind_int64(stmt, 1, (sqlite3_int64)account);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW)
+        snprintf(name, (size_t)capacity, "%s", sqlite3_column_text(stmt, 0));
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW ? 0 : -1;
+}
+
+int db_list_buddies(cupid_db_t *db, uint64_t owner, db_buddy_cb cb, void *ctx) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT u.id,u.username FROM buddies b JOIN users u ON u.id=b.buddy_id "
+                      "WHERE b.owner_id=? ORDER BY u.username COLLATE NOCASE";
+    if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
+        return -1;
+    sqlite3_bind_int64(stmt, 1, (sqlite3_int64)owner);
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+        cb(ctx, (uint64_t)sqlite3_column_int64(stmt, 0),
+           (const char *)sqlite3_column_text(stmt, 1));
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? 0 : -1;
+}
+
+int db_update_buddy(cupid_db_t *db, uint64_t owner, const char *name, bool remove) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db->handle, "SELECT id FROM users WHERE username=? COLLATE NOCASE", -1,
+                           &stmt, NULL) != SQLITE_OK)
+        return -1;
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    uint64_t buddy = rc == SQLITE_ROW ? (uint64_t)sqlite3_column_int64(stmt, 0) : 0;
+    sqlite3_finalize(stmt);
+    if (!buddy)
+        return rc == SQLITE_DONE ? -2 : -1;
+    if (owner == buddy)
+        return -4;
+    if (!remove) {
+        const char *sql =
+            "SELECT COUNT(*),COALESCE(MAX(buddy_id=?),0) FROM buddies WHERE owner_id=?";
+        if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
+            return -1;
+        sqlite3_bind_int64(stmt, 1, (sqlite3_int64)buddy);
+        sqlite3_bind_int64(stmt, 2, (sqlite3_int64)owner);
+        rc = sqlite3_step(stmt);
+        int count = rc == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : MAX_BUDDIES;
+        int exists = rc == SQLITE_ROW ? sqlite3_column_int(stmt, 1) : 0;
+        sqlite3_finalize(stmt);
+        if (rc != SQLITE_ROW)
+            return -1;
+        if (exists)
+            return 0;
+        if (count >= MAX_BUDDIES)
+            return -3;
+    }
+    const char *sql = remove ? "DELETE FROM buddies WHERE owner_id=? AND buddy_id=?"
+                             : "INSERT INTO buddies(owner_id,buddy_id) VALUES(?,?)";
+    if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
+        return -1;
+    sqlite3_bind_int64(stmt, 1, (sqlite3_int64)owner);
+    sqlite3_bind_int64(stmt, 2, (sqlite3_int64)buddy);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? 0 : -1;
 }

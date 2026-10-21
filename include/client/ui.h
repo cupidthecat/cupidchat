@@ -18,13 +18,16 @@ enum {
     UI_CLOSE,
     UI_LATEST,
     UI_NEXT_UNREAD,
+    UI_BUDDY_SELECT,
+    UI_BUDDY_OPEN,
     UI_QUIT
 };
 
 typedef struct {
     ui_layout_t layout;
     void *win_topbar, *win_topic, *win_rooms, *win_chat, *win_users, *win_input;
-    bool show_users, dirty, show_help_modal, show_emoji_modal, confirm_quit;
+    bool show_users, dirty, show_help_modal, show_emoji_modal, show_buddies_modal, confirm_quit;
+    int buddy_cursor;
     int emoji_cursor;
     char input_buf[4096];
     int input_len, input_cursor, input_offset, nav_cursor;

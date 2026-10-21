@@ -58,7 +58,8 @@ SOUNDS_GEN_H := include/client/sounds_data.h
 # regeneration if that file changes.
 SOUNDS_WAVS  := sounds/Welcome.wav sounds/Goodbye.wav \
                 sounds/IM.wav sounds/BuddyIn.wav sounds/BuddyOut.wav \
-                sounds/Mention.wav sounds/Error.wav sounds/Topic.wav
+                sounds/Mention.wav sounds/Error.wav sounds/Topic.wav \
+                sounds/BuddyOnline.wav sounds/BuddyOffline.wav
 
 $(SOUNDS_GEN_C) $(SOUNDS_GEN_H) &: $(SOUNDS_WAVS) scripts/gen_sounds.py
 	@echo "  GEN  sounds_data"
@@ -89,6 +90,7 @@ SERVER_SRC := \
     $(SRVDIR)/core/keepalive.c \
     $(SRVDIR)/core/rate_limit.c \
     $(SRVDIR)/core/backpressure.c \
+    $(SRVDIR)/core/buddies.c \
     $(SRVDIR)/util/log.c      \
     $(SRVDIR)/util/config.c   \
     $(SRVDIR)/db/db.c

@@ -25,6 +25,8 @@ SOUNDS = [
     ("Mention.wav",         "mention"),
     ("Error.wav",           "error"),
     ("Topic.wav",           "topic"),
+    ("BuddyOnline.wav",     "buddy_online"),
+    ("BuddyOffline.wav",    "buddy_offline"),
 ]
 
 HEADER_BANNER = """\

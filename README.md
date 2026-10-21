@@ -171,6 +171,9 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 | `/close` | Close the active DM or leave the active room |
 | `/latest` | Return the active chat to its newest messages |
 | `/emoji` | Open the emoji picker; arrows choose, Enter inserts, Esc closes |
+| `/buddies` | Open your account's buddy list |
+| `/buddy add <account>` | Watch an existing account's online and away status |
+| `/buddy remove <account>` | Remove an account from your buddy list |
 
 **Users**
 
@@ -231,6 +234,7 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | `F3` / `Ctrl+W` | Close the active chat |
 | `F4` | Return to the newest messages |
 | `F5` | Jump to the next unread chat |
+| `F6` | Open or refresh the buddy list; Enter opens a DM with the selected online buddy |
 | `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
 | `Ctrl+L` | Redraw the terminal |
 
@@ -257,6 +261,25 @@ nickname completion.
 The user sidebar hides below 100 columns; the chat sidebar hides below 60.
 Below 40 columns or 8 rows, a resize notice replaces the panes. Your draft,
 selected chat, and history remain available when the terminal grows again.
+
+### Buddy list
+
+Log in or register before using buddies. Your list is stored with your account
+on the server and survives reconnects, nickname changes, and server restarts.
+Use `/buddy add <account>` to add an existing account, then F6 or `/buddies` to
+see who is online, away, or offline. The list holds up to 64 accounts. Arrows
+select a buddy, Enter opens a DM, R refreshes, and Esc closes the window.
+
+The list follows account names, not guest nicknames. A buddy appears online
+while logged in; their current display nickname appears beside the account if
+it differs. Watching is one-way: adding a buddy does not add you to their list.
+Your list is sent only to your own connection. Online and offline transitions
+play separate tones; initial list loading and away updates stay quiet.
+
+Messages sent from an existing DM or `/reply` include its peer's session ID.
+The server rejects a message if someone else has taken that nickname. Reopen
+the DM after a buddy reconnects. Explicit `/dm <nick> <message>` still addresses
+the current holder of that nickname.
 
 ### Emoji and Unicode
 

@@ -137,6 +137,88 @@ static void select_dm(cli_model_t *m, ui_state_t *ui, uint32_t uid, const char *
     ui->dirty = true;
 }
 
+static void buddy_frames(const frame_t *f, cli_model_t *m, ui_state_t *ui) {
+    cli_buddy_t entries[MAX_BUDDIES] = {0};
+    int count = 0;
+    tlv_reader_t reader;
+    tlv_field_t field;
+    tlv_reader_init(&reader, f->payload, f->hdr.length);
+    while (tlv_reader_next(&reader, &field)) {
+        if (field.tag == TAG_BASE_NICK) {
+            if (count == MAX_BUDDIES)
+                break;
+            size_t length = field.len < CLI_NICK_MAX ? field.len : CLI_NICK_MAX - 1;
+            memcpy(entries[count++].account, field.val, length);
+            continue;
+        }
+        if (!count)
+            continue;
+        cli_buddy_t *b = &entries[count - 1];
+        if (field.tag == TAG_NICK) {
+            size_t length = field.len < CLI_NICK_MAX ? field.len : CLI_NICK_MAX - 1;
+            memcpy(b->nick, field.val, length);
+        } else if (field.tag == TAG_AWAY_MSG) {
+            size_t length = field.len < sizeof(b->away_msg) ? field.len : sizeof(b->away_msg) - 1;
+            memcpy(b->away_msg, field.val, length);
+        } else if (field.tag == TAG_USER_ID && field.len == 4) {
+            uint32_t value;
+            memcpy(&value, field.val, 4);
+            b->user_id = ntohl(value);
+        } else if (field.tag == TAG_PRESENCE && field.len == 1) {
+            b->presence = field.val[0] <= 2 ? field.val[0] : 0;
+        }
+    }
+    if (f->hdr.type == SMSG_BUDDY_LIST) {
+        memcpy(m->buddies, entries, sizeof(entries));
+        m->buddy_count = count;
+    } else if (count == 1) {
+        cli_buddy_t *incoming = &entries[0];
+        for (int i = 0; i < m->buddy_count; i++) {
+            cli_buddy_t *saved = &m->buddies[i];
+            if (strcasecmp(saved->account, incoming->account))
+                continue;
+            bool changed = !!saved->presence != !!incoming->presence;
+            *saved = *incoming;
+            if (incoming->user_id == m->last_dm_uid)
+                snprintf(m->last_dm_nick, sizeof(m->last_dm_nick), "%s", incoming->nick);
+            for (int j = 0; j < m->dm_count; j++)
+                if (incoming->presence && m->dms[j].peer_uid == incoming->user_id)
+                    snprintf(m->dms[j].peer_nick, sizeof(m->dms[j].peer_nick), "%s",
+                             incoming->nick);
+            if (changed && !model_is_ignored(m, incoming->account) &&
+                !model_is_ignored(m, incoming->nick)) {
+                char status[128];
+                snprintf(status, sizeof(status), "%s signed %s", incoming->account,
+                         incoming->presence ? "on" : "off");
+                model_set_status(m, status, 6);
+                sound_play(incoming->presence ? SND_BUDDY_ONLINE : SND_BUDDY_OFFLINE);
+            }
+            break;
+        }
+    }
+    ui->dirty = true;
+}
+
+static bool buddies_available(cli_model_t *m) {
+    if (!(m->server_caps & CAP_BUDDIES)) {
+        model_set_status(m, "This server does not support buddy lists", 5);
+        return false;
+    }
+    if (!m->logged_in) {
+        model_set_status(m, "Log in first to use your persistent buddy list", 5);
+        return false;
+    }
+    return true;
+}
+
+static void open_buddies(cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
+    if (buddies_available(m)) {
+        ui->show_buddies_modal = true;
+        client_send_buddy(cc, CMSG_BUDDY_LIST, NULL);
+    }
+    ui->dirty = true;
+}
+
 static void on_frame(const frame_t *f, void *ctx_ptr) {
     frame_ctx_t *ctx = ctx_ptr;
     cli_model_t *m = ctx->model;
@@ -152,6 +234,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_str(p, pl, TAG_SERVER_NAME, m->server_name, sizeof(m->server_name));
             tlv_read_str(p, pl, TAG_MOTD, m->motd, sizeof(m->motd));
             m->session_id = sid;
+            tlv_read_u32(p, pl, TAG_CAPS, &m->server_caps);
             m->user_id = sid; /* our own UID for self-message detection */
             m->status = CLI_ONLINE;
             sound_play(SND_WELCOME);
@@ -197,6 +280,11 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             ctx->ui->dirty = true;
             break;
         }
+
+        case SMSG_BUDDY_LIST:
+        case SMSG_BUDDY_PRESENCE:
+            buddy_frames(f, m, ctx->ui);
+            break;
 
         case SMSG_ROOM_MSG:
         case SMSG_ROOM_HISTORY: {
@@ -514,6 +602,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         }
 
         case SMSG_REGISTER_OK: {
+            m->logged_in = true;
             char new_nick[33] = {0};
             uint32_t uid = 0;
             tlv_read_str(p, pl, TAG_NICK, new_nick, sizeof(new_nick));
@@ -531,6 +620,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         }
 
         case SMSG_LOGIN_OK: {
+            m->logged_in = true;
             char new_nick[33] = {0};
             uint32_t uid = 0;
             tlv_read_str(p, pl, TAG_NICK, new_nick, sizeof(new_nick));
@@ -548,6 +638,10 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         }
 
         case SMSG_LOGOUT_OK: {
+            m->logged_in = false;
+            m->buddy_count = 0;
+            memset(m->buddies, 0, sizeof(m->buddies));
+            ctx->ui->show_buddies_modal = false;
             char guest_nick[33] = {0};
             tlv_read_str(p, pl, TAG_NICK, guest_nick, sizeof(guest_nick));
             snprintf(m->nick, sizeof(m->nick), "%s", guest_nick);
@@ -679,7 +773,22 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
         }
     }
 
-    if (!strcmp(cmd, "query") || !strncmp(cmd, "query ", 6)) {
+    if (!strcmp(cmd, "buddies") || !strcmp(cmd, "buddy")) {
+        open_buddies(m, cc, ui);
+    } else if (!strncmp(cmd, "buddy ", 6)) {
+        if (buddies_available(m)) {
+            const char *arg = cmd + 6;
+            bool add = !strncmp(arg, "add ", 4);
+            bool remove = !strncmp(arg, "remove ", 7);
+            const char *name = add ? arg + 4 : remove ? arg + 7 : "";
+            if (!*name || strlen(name) >= CLI_NICK_MAX || strchr(name, ' '))
+                model_set_status(m, "Usage: /buddy add|remove <account>", 5);
+            else {
+                client_send_buddy(cc, add ? CMSG_BUDDY_ADD : CMSG_BUDDY_REMOVE, name);
+                model_set_status(m, "Updating buddy list...", 4);
+            }
+        }
+    } else if (!strcmp(cmd, "query") || !strncmp(cmd, "query ", 6)) {
         const char *nick = cmd[5] ? cmd + 6 : "";
         while (*nick == ' ')
             nick++;
@@ -696,7 +805,7 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
         if (!m->last_dm_nick[0])
             model_set_status(m, "No incoming DM to reply to yet", 4);
         else {
-            client_send_dm(cc, m->last_dm_nick, cmd + 6);
+            client_send_dm_to(cc, m->last_dm_nick, cmd + 6, m->last_dm_uid);
             select_dm(m, ui, m->last_dm_uid, m->last_dm_nick);
         }
     } else if (!strcmp(cmd, "unread")) {
@@ -1119,6 +1228,24 @@ int main(int argc, char **argv) {
                 next_unread(&model, &cc, &ui);
                 continue;
             }
+            if (kr == UI_BUDDY_OPEN) {
+                open_buddies(&model, &cc, &ui);
+                continue;
+            }
+            if (kr == UI_BUDDY_SELECT) {
+                if (ui.buddy_cursor >= 0 && ui.buddy_cursor < model.buddy_count) {
+                    const cli_buddy_t *buddy = &model.buddies[ui.buddy_cursor];
+                    if (buddy->presence && buddy->user_id) {
+                        select_dm(&model, &ui, buddy->user_id, buddy->nick);
+                        ui.show_buddies_modal = false;
+                    } else {
+                        model_set_status(&model, "That buddy is offline", 4);
+                        ui.show_buddies_modal = false;
+                    }
+                }
+                ui.dirty = true;
+                continue;
+            }
             if (kr == UI_SCROLL) {
                 ui_scroll(&ui, &model, ui.scroll_delta);
                 continue;
@@ -1136,7 +1263,8 @@ int main(int argc, char **argv) {
                         model.rooms[model.active_room].scroll_offset = 0;
                     } else if (model.active_dm >= 0 && model.active_dm < model.dm_count) {
                         const char *peer = model.dms[model.active_dm].peer_nick;
-                        client_send_dm(&cc, peer, input_line);
+                        client_send_dm_to(&cc, peer, input_line,
+                                          model.dms[model.active_dm].peer_uid);
                         model.dms[model.active_dm].scroll_offset = 0;
                     } else {
                         model_set_status(&model, "Join a room first: /join <name>", 4);

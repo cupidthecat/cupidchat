@@ -43,3 +43,11 @@ extern const uint8_t snd_error_data[];
 /* topic — 7542 bytes */
 extern const uint8_t snd_topic_data[];
 #define snd_topic_size 7542U
+
+/* buddy_online — 11512 bytes */
+extern const uint8_t snd_buddy_online_data[];
+#define snd_buddy_online_size 11512U
+
+/* buddy_offline — 11512 bytes */
+extern const uint8_t snd_buddy_offline_data[];
+#define snd_buddy_offline_size 11512U

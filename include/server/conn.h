@@ -26,6 +26,8 @@ typedef struct {
     conn_state_t state;
     uint32_t user_id;
     uint64_t account_id;
+    uint64_t buddy_ids[MAX_BUDDIES];
+    int buddy_count;
     char nick[MAX_NICK_LEN + 1], base_nick[MAX_NICK_LEN + 1];
     bool registered, is_away;
     char away_msg[256];

@@ -49,8 +49,18 @@ typedef struct {
 } cli_user_t;
 
 typedef struct {
+    char account[CLI_NICK_MAX], nick[CLI_NICK_MAX], away_msg[256];
+    uint32_t user_id;
+    uint8_t presence;
+} cli_buddy_t;
+
+typedef struct {
     cli_status_t status;
     uint32_t session_id, user_id;
+    uint32_t server_caps;
+    bool logged_in;
+    cli_buddy_t buddies[MAX_BUDDIES];
+    int buddy_count;
     char nick[CLI_NICK_MAX], base_nick[CLI_NICK_MAX], server_name[128], motd[2048];
     bool is_away;
     char away_msg[256];

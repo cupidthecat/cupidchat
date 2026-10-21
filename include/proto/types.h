@@ -8,6 +8,8 @@
 #define MAX_ROOM_LEN 64
 #define MAX_MSG_LEN 4096
 #define CAP_HISTORY 0x00000001u
+#define CAP_BUDDIES 0x00000002u
+#define MAX_BUDDIES 64
 
 /* Shared wire values. Rebuild clients with these recovered headers:
  * only HELLO, WELCOME, ERROR, version and nick tags survive in the
@@ -30,6 +32,9 @@ typedef enum {
     CMSG_LIST_USERS = 0x0021,
     CMSG_PING = 0x0030,
     CMSG_PONG = 0x0031,
+    CMSG_BUDDY_ADD = 0x0040,
+    CMSG_BUDDY_REMOVE = 0x0041,
+    CMSG_BUDDY_LIST = 0x0042,
     CMSG_FILE_OFFER = 0x0100,
     CMSG_FILE_ACCEPT = 0x0101,
     CMSG_FILE_DECLINE = 0x0102,
@@ -58,7 +63,9 @@ typedef enum {
     SMSG_ROOM_LIST = 0x8020,
     SMSG_USER_LIST = 0x8021,
     SMSG_PING = 0x8030,
-    SMSG_PONG = 0x8031
+    SMSG_PONG = 0x8031,
+    SMSG_BUDDY_LIST = 0x8040,
+    SMSG_BUDDY_PRESENCE = 0x8041
 } server_msg_t;
 
 typedef enum {
@@ -81,6 +88,7 @@ typedef enum {
     TAG_PEER_NICK = 0x0032,
     TAG_PEER_UID = 0x0033,
     TAG_SCOPE = 0x0034,
+    TAG_PRESENCE = 0x0035,
     TAG_ERROR_CODE = 0x0040,
     TAG_ERROR_MSG = 0x0041
 } tlv_tag_t;
