@@ -69,7 +69,8 @@ int conn_enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags,
         obuf_node_t *prev = NULL, *cur = c->obuf_head;
         bool dropped = false;
         while (cur) {
-            if (cur->flags & FRAME_FLAG_PRIORITY_LOW) {
+            /* Once bytes reach TCP, the remainder must stay in order. */
+            if ((cur->flags & FRAME_FLAG_PRIORITY_LOW) && cur->sent == 0) {
                 obuf_node_t *drop = cur;
                 size_t freed = drop->len - drop->sent;
                 if (prev) prev->next = drop->next;
