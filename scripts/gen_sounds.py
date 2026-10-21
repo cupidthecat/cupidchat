@@ -22,6 +22,9 @@ SOUNDS = [
     ("IM.wav",              "im"),
     ("BuddyIn.wav",         "buddy_in"),
     ("BuddyOut.wav",        "buddy_out"),
+    ("Mention.wav",         "mention"),
+    ("Error.wav",           "error"),
+    ("Topic.wav",           "topic"),
 ]
 
 HEADER_BANNER = """\
@@ -94,7 +97,7 @@ def main() -> None:
 
     total = sum(len(d) for _, _, d in blobs)
     print(f"gen_sounds.py: wrote {len(blobs)} sounds "
-          f"({total} bytes raw) → {out_c}, {out_h}")
+          f"({total} bytes raw) -> {out_c}, {out_h}")
 
 
 if __name__ == "__main__":

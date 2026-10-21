@@ -31,3 +31,15 @@ extern const uint8_t snd_buddy_in_data[];
 /* buddy_out — 5236 bytes */
 extern const uint8_t snd_buddy_out_data[];
 #define snd_buddy_out_size 5236U
+
+/* mention — 10186 bytes */
+extern const uint8_t snd_mention_data[];
+#define snd_mention_size 10186U
+
+/* error — 10186 bytes */
+extern const uint8_t snd_error_data[];
+#define snd_error_size 10186U
+
+/* topic — 7542 bytes */
+extern const uint8_t snd_topic_data[];
+#define snd_topic_size 7542U

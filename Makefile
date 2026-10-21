@@ -57,9 +57,10 @@ SOUNDS_GEN_H := include/client/sounds_data.h
 # prerequisite names.  Modify gen_sounds.py or touch any listed WAV to force
 # regeneration if that file changes.
 SOUNDS_WAVS  := sounds/Welcome.wav sounds/Goodbye.wav \
-                sounds/IM.wav sounds/BuddyIn.wav sounds/BuddyOut.wav
+                sounds/IM.wav sounds/BuddyIn.wav sounds/BuddyOut.wav \
+                sounds/Mention.wav sounds/Error.wav sounds/Topic.wav
 
-$(SOUNDS_GEN_C) $(SOUNDS_GEN_H): $(SOUNDS_WAVS) scripts/gen_sounds.py
+$(SOUNDS_GEN_C) $(SOUNDS_GEN_H) &: $(SOUNDS_WAVS) scripts/gen_sounds.py
 	@echo "  GEN  sounds_data"
 	@python3 scripts/gen_sounds.py sounds $(SOUNDS_GEN_C) $(SOUNDS_GEN_H)
 

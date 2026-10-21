@@ -21,7 +21,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 - Per-nick color assignment, IRC-style `/me` actions, date separators
 - Command history (Up/Down), sidebar navigation (Tab / arrow keys)
 - Notification sounds embedded directly in the binary - no `sounds/` directory needed at runtime
-- All sounds played via `aplay` (ALSA) in a forked child; TUI is never blocked
+- Desktop audio via `paplay` or `pw-play`, with `aplay` fallback and bounded background playback
 
 **Protocol**
 
@@ -44,19 +44,19 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 **Runtime**
 
 - Linux kernel >= 3.17 (uses `memfd_create` for in-memory sound playback)
-- `aplay` (ALSA userspace tool) for notification sounds - sounds are silently skipped if absent
+- `paplay` (PulseAudio/WSLg), `pw-play` (PipeWire), or `aplay` (ALSA) for notifications
 
 ### Ubuntu/Debian
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential libsqlite3-dev libncurses-dev libssl-dev python3 alsa-utils
+sudo apt install -y build-essential libsqlite3-dev libncurses-dev libssl-dev python3 pulseaudio-utils alsa-utils
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S base-devel sqlite ncurses openssl python alsa-utils
+sudo pacman -S base-devel sqlite ncurses openssl python libpulse alsa-utils
 ```
 
 ## Build
@@ -191,6 +191,7 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 |---------|-------------|
 | `/quit` or `/q` | Exit the client |
 | `/help` | Open the command help modal |
+| `/sound on\|off\|test\|status` | Control notification audio |
 
 ## Keyboard shortcuts
 
@@ -288,7 +289,7 @@ src/
       layout.c          - ncurses window creation and resize
       render.c          - all pane rendering (topbar, rooms, chat, input)
       input.c           - keyboard input, sidebar navigation
-    sound.c             - notification sound playback via memfd + aplay
+    sound.c             - notification sound playback via memfd and desktop audio
     sounds_data.c       - auto-generated: WAV blobs as C arrays (do not edit)
 
   shared/
@@ -321,8 +322,29 @@ Installs to:
 
 ## Notes
 
-- Sound playback requires `aplay` (ALSA). If it is absent, sounds are silently disabled - the client runs normally without them.
+- Use `/sound status` to check audio, `/sound test` for a preview, and `/sound on` or `/sound off` to control notifications.
 - The client binary is fully self-contained after build. The `sounds/` directory is not needed at runtime.
 - The server allocates its connection table based on the process's `RLIMIT_NOFILE` (open file descriptor limit) rather than `--max-clients`, so file descriptor numbers never exceed the array bounds regardless of OS assignment.
 - SQLite is opened in WAL mode with a 5-second busy timeout, so brief lock contention between the server and external tools does not cause crashes.
 - The database file (`cupidchat.db`) is created automatically on first run if it does not exist.
+
+## WSL audio
+
+Install `pulseaudio-utils` in the WSL distribution that runs the client. WSLg
+normally provides `PULSE_SERVER=unix:/mnt/wslg/PulseServer`; CupidChat also looks
+for that socket when the variable is absent. A PulseAudio daemon inside the
+distribution is not required for WSLg playback.
+
+Run `./cupid-chat --sound-test` to play the embedded welcome sound without
+connecting. It prints the audio server, attempted player paths, and player errors.
+If playback succeeds but you hear nothing, check the Windows volume mixer and
+output device. WSL installations without WSLg need a configured audio server.
+
+The client tries `paplay`, `pw-play`, then `aplay`. Playback workers are limited
+to four at once, with a 200 ms notification interval. Each player has an eight
+second timeout. `/sound off` mutes future notifications for this session.
+
+The first incoming DM uses the mail sound; later replies use the IM sound.
+Mentions, server errors, and topic changes have separate short tones generated
+by `scripts/gen_notification_sounds.py`. History replay and ignored messages do
+not trigger mention sounds.

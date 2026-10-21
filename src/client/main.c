@@ -67,6 +67,7 @@ void client_config_usage(const char *prog) {
             "  --nick NICK        Your nickname  (default: guest)\n"
             "  --tls              Use TLS connection\n"
             "  --verbose          Debug output\n"
+            "  --sound-test       Play a sound and show audio errors without connecting\n"
             "  -h, --help\n",
             prog);
 }
@@ -78,13 +79,10 @@ int client_config_parse(int argc, char **argv, client_config_t *cfg) {
     make_default_nick(cfg->nick, sizeof(cfg->nick));
 
     static const struct option opts[] = {
-        {"host", required_argument, NULL, 'H'},
-        {"port", required_argument, NULL, 'p'},
-        {"nick", required_argument, NULL, 'n'},
-        {"tls", no_argument, NULL, 't'},
-        {"verbose", no_argument, NULL, 'v'},
-        {"help", no_argument, NULL, 'h'},
-        {NULL, 0, NULL, 0},
+        {"host", required_argument, NULL, 'H'}, {"port", required_argument, NULL, 'p'},
+        {"nick", required_argument, NULL, 'n'}, {"tls", no_argument, NULL, 't'},
+        {"verbose", no_argument, NULL, 'v'},    {"sound-test", no_argument, NULL, 's'},
+        {"help", no_argument, NULL, 'h'},       {NULL, 0, NULL, 0},
     };
     int c;
     while ((c = getopt_long(argc, argv, "h", opts, NULL)) != -1) {
@@ -103,6 +101,9 @@ int client_config_parse(int argc, char **argv, client_config_t *cfg) {
                 break;
             case 'v':
                 cfg->verbose = true;
+                break;
+            case 's':
+                cfg->sound_test = true;
                 break;
             case 'h':
                 return 1;
@@ -179,6 +180,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_u16(p, pl, TAG_ERROR_CODE, &code);
             tlv_read_str(p, pl, TAG_ERROR_MSG, msg, sizeof(msg));
             model_set_status(m, msg, 5);
+            sound_play(SND_ERROR);
             ctx->ui->dirty = true;
             break;
         }
@@ -219,11 +221,10 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 model_push_room_msg(m, room, uid, nick, bn, text, ts, self, m->nick);
             }
             /* nick-mention highlight: sound + bell */
-            if (!self && m->nick[0]) {
+            if (f->hdr.type == SMSG_ROOM_MSG && !self && m->nick[0] && !model_is_ignored(m, nick)) {
                 const char *check = (text[0] == '\x01') ? text + 8 : text;
                 if (strcasestr(check, m->nick)) {
-                    sound_play(SND_IM);
-                    beep();
+                    sound_play(SND_MENTION);
                 }
             }
             ctx->ui->dirty = true;
@@ -248,6 +249,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
              *   self==false (inbound): peer = sender_nick / sender_uid */
             uint32_t conv_uid = self ? peer_uid2 : sender_uid;
             const char *conv_nick = self ? peer_nick : sender_nick;
+            if (!self && model_is_ignored(m, sender_nick))
+                break;
             /* Check if this is the first message in this DM conversation */
             bool is_first_msg = false;
             if (!self) {
@@ -261,8 +264,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 is_first_msg = (!existing_dm || existing_dm->msgs_len == 0);
             }
             model_push_dm_msg(m, conv_uid, conv_nick, text, ts, self);
-            if (!self && is_first_msg)
-                sound_play(SND_DM);
+            if (!self)
+                sound_play(is_first_msg ? SND_DM : SND_IM);
             ctx->ui->dirty = true;
             break;
         }
@@ -532,6 +535,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 char info[320];
                 snprintf(info, sizeof(info), "%.32s set the topic: %.200s", setter, topic);
                 model_push_system_msg(m, room, info, (uint64_t)time(NULL) * 1000, MSG_SYSTEM);
+                if (strcasecmp(setter, m->nick) != 0 && !model_is_ignored(m, setter))
+                    sound_play(SND_TOPIC);
             }
             ctx->ui->dirty = true;
             break;
@@ -587,7 +592,21 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
     /* skip leading '/' */
     const char *cmd = line + 1;
 
-    if (strncmp(cmd, "me ", 3) == 0) {
+    if (strcmp(cmd, "sound") == 0 || strncmp(cmd, "sound ", 6) == 0) {
+        const char *arg = cmd[5] == ' ' ? cmd + 6 : "status";
+        if (!strcmp(arg, "on"))
+            sound_set_enabled(1);
+        else if (!strcmp(arg, "off"))
+            sound_set_enabled(0);
+        else if (!strcmp(arg, "test"))
+            sound_play(SND_MENTION);
+        else if (strcmp(arg, "status")) {
+            model_set_status(m, "Usage: /sound on|off|test|status", 6);
+            ui->dirty = true;
+            return;
+        }
+        model_set_status(m, sound_status(), 8);
+    } else if (strncmp(cmd, "me ", 3) == 0) {
         /* /me <action text> -  send an IRC-style action */
         const char *action = cmd + 3;
         if (m->active_room >= 0) {
@@ -857,6 +876,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    sound_init(NULL);
+    if (cfg.sound_test)
+        return sound_diagnose() == 0 ? 0 : 1;
+
     /* connect */
     client_conn_t cc;
     fprintf(stderr, "Connecting to %s:%u...\n", cfg.host, cfg.port);
@@ -871,9 +894,6 @@ int main(int argc, char **argv) {
     model.status = CLI_CONNECTING;
     snprintf(model.nick, sizeof(model.nick), "%s", cfg.nick);
     snprintf(model.base_nick, sizeof(model.base_nick), "%s", cfg.nick);
-
-    /* init sounds (relative to CWD where the binary is run from) */
-    sound_init("sounds");
 
     /* send HELLO */
     if (client_send_hello(&cc, cfg.nick) < 0) {

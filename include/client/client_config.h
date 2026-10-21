@@ -7,7 +7,7 @@
 typedef struct {
     char host[256], nick[MAX_NICK_LEN + 1];
     uint16_t port;
-    bool use_tls, verbose;
+    bool use_tls, verbose, sound_test;
 } client_config_t;
 
 void client_config_usage(const char *prog);
