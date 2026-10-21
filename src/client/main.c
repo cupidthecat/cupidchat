@@ -667,7 +667,13 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
     for (size_t i = 0; i < sizeof(aliases) / sizeof(aliases[0]); i++) {
         size_t length = strlen(aliases[i].alias);
         if (!strncmp(cmd, aliases[i].alias, length) && (!cmd[length] || cmd[length] == ' ')) {
-            snprintf(expanded, sizeof(expanded), "%s%s", aliases[i].command, cmd + length);
+            int size =
+                snprintf(expanded, sizeof(expanded), "%s%s", aliases[i].command, cmd + length);
+            if (size < 0 || size >= (int)sizeof(expanded)) {
+                model_set_status(m, "Command is too long", 4);
+                ui->dirty = true;
+                return;
+            }
             cmd = expanded;
             break;
         }
