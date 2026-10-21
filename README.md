@@ -165,6 +165,7 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 | `/closedm <nick>` | Remove a DM from the sidebar |
 | `/close` | Close the active DM or leave the active room |
 | `/latest` | Return the active chat to its newest messages |
+| `/emoji` | Open the emoji picker; arrows choose, Enter inserts, Esc closes |
 
 **Users**
 
@@ -221,6 +222,7 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | `Delete` | Delete character under cursor |
 | `Esc` | Dismiss help modal |
 | `F1` | Open help; Up/Down scroll it |
+| `F2` | Open the emoji picker |
 | `F3` / `Ctrl+W` | Close the active chat |
 | `F4` | Return to the newest messages |
 | `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
@@ -239,6 +241,19 @@ live chat. This buffer is separate from the history replay sent by the server.
 The user sidebar hides below 100 columns; the chat sidebar hides below 60.
 Below 40 columns or 8 rows, a resize notice replaces the panes. Your draft,
 selected chat, and history remain available when the terminal grows again.
+
+### Emoji and Unicode
+
+Use a UTF-8 locale, such as `C.UTF-8`, and a terminal font with emoji glyphs.
+You can paste emoji, type them with your OS picker, or use F2, `/emoji`, or the
+Emoji footer button. Shortcodes such as `:smile:`, `:heart:`, `:thumbsup:`,
+`:party:`, and `:rocket:` expand in room messages, actions, and DMs.
+
+The client links against wide ncurses. Editing moves through UTF-8 characters
+without splitting their bytes; scrolling and wrapping use terminal cell widths.
+Combined emoji sequences, variation selectors, and color rendering depend on
+the terminal and font. Editing operates on code points, so a combined sequence
+may need more than one Backspace.
 
 ## Tests
 

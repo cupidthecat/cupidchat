@@ -10,6 +10,7 @@
  */
 
 #include "client/history.h"
+#include "client/text.h"
 #include <string.h>
 
 /* The iterator counts messages; the display helpers below count terminal rows. */
@@ -81,8 +82,7 @@ int history_message_rows(const cli_msg_t *msg, int width, bool ignored) {
     if (ignored || width <= 0)
         return 1;
     int text_width = width - history_prefix_width(msg, width);
-    int length = (int)strlen(msg->text);
-    return length ? (length + text_width - 1) / text_width : 1;
+    return text_wrap_rows(msg->text, text_width);
 }
 
 static bool ignored_message(const cli_model_t *m, const cli_msg_t *msg) {
@@ -129,8 +129,10 @@ int history_reflow_scroll(const cli_msg_t *buf, int cap, int head, int len, int 
         int old_h = history_message_rows(msg, old_width, ignored);
         int new_h = history_message_rows(msg, new_width, ignored);
         if (target < old_row + old_h) {
-            int bytes = (target - old_row) * (old_width - history_prefix_width(msg, old_width));
-            int line = bytes / (new_width - history_prefix_width(msg, new_width));
+            int bytes = text_row_offset(msg->text, old_width - history_prefix_width(msg, old_width),
+                                        target - old_row);
+            int line =
+                text_offset_row(msg->text, new_width - history_prefix_width(msg, new_width), bytes);
             if (line >= new_h)
                 line = new_h - 1;
             return new_total - new_row - line - 1;

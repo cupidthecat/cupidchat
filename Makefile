@@ -102,6 +102,7 @@ CLIENT_SRC := \
     $(CLIDIR)/net/client_conn.c    \
     $(CLIDIR)/state/model.c        \
     $(CLIDIR)/state/history.c      \
+    $(CLIDIR)/state/text.c         \
     $(CLIDIR)/ui/layout.c          \
     $(CLIDIR)/ui/input.c           \
     $(CLIDIR)/ui/render.c          \
@@ -133,7 +134,7 @@ $(SERVER_BIN): $(SERVER_OBJ) $(SHARED_OBJ)
 	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ $(LDTLS) -lsqlite3 -lcrypt
 
 $(CLIENT_BIN): $(CLIENT_OBJ) $(SHARED_OBJ)
-	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncurses $(LDTLS)
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncursesw $(LDTLS)
 
 # Compile rule 
 $(BUILDDIR)/%.o: src/%.c
@@ -164,9 +165,10 @@ check: $(TEST_BINS)
 
 $(BUILDDIR)/tests/client/test_ui: $(TESTDIR)/client/test_ui.c \
     $(BUILDDIR)/client/state/model.o $(BUILDDIR)/client/state/history.o \
+    $(BUILDDIR)/client/state/text.o \
     $(BUILDDIR)/client/ui/layout.o $(BUILDDIR)/client/ui/input.o \
     $(BUILDDIR)/client/ui/render.o
-	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncurses
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncursesw
 
 clean:
 	rm -rf $(BUILDDIR) $(SERVER_BIN) $(CLIENT_BIN) \

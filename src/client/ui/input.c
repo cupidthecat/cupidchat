@@ -8,7 +8,11 @@
 #include <string.h>
 
 #include "client/history.h"
+#include "client/text.h"
 #include "client/ui.h"
+#include <limits.h>
+#include <wchar.h>
+#include <wctype.h>
 
 void ui_clamp_navigation(ui_state_t *ui, const cli_model_t *m) {
     int total = m->room_count + m->dm_count;
@@ -45,6 +49,8 @@ int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
             return UI_LATEST;
         if (x >= 24 && x < 30)
             ui->confirm_quit = true;
+        if (x >= 31 && x < 38)
+            ui->show_emoji_modal = true;
     } else if (y >= 3 && y < 2 + ui->layout.chat_h && x < ui->layout.rooms_w - 1) {
         int index = ui->sidebar_offset + y - 3;
         if (index < m->room_count + m->dm_count) {
@@ -52,7 +58,7 @@ int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
             return UI_SELECT;
         }
     } else if (y == ui->layout.rows - 1 && x >= 2) {
-        ui->input_cursor = ui->input_offset + x - 2;
+        ui->input_cursor = text_cell_offset(ui->input_buf, ui->input_offset, x - 2);
         if (ui->input_cursor > ui->input_len)
             ui->input_cursor = ui->input_len;
     }
@@ -82,14 +88,30 @@ static void input_clear(ui_state_t *ui) {
     memset(ui->input_buf, 0, sizeof(ui->input_buf));
     ui->input_len = 0;
     ui->input_cursor = 0;
+    ui->input_offset = 0;
+}
+
+static void insert_text(ui_state_t *ui, const char *text) {
+    int length = (int)strlen(text);
+    if (ui->input_len + length >= (int)sizeof(ui->input_buf))
+        return;
+    memmove(ui->input_buf + ui->input_cursor + length, ui->input_buf + ui->input_cursor,
+            (size_t)(ui->input_len - ui->input_cursor + 1));
+    memcpy(ui->input_buf + ui->input_cursor, text, (size_t)length);
+    ui->input_len += length;
+    ui->input_cursor += length;
+    ui->dirty = true;
 }
 
 /* Main tick */
 
 int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_max) {
-    int ch = getch();
-    if (ch == ERR)
+    wint_t key;
+    int kind = get_wch(&key);
+    if (kind == ERR)
         return ERR;
+    /* Unicode values can equal ncurses key codes. Keep the two namespaces apart. */
+    int ch = kind == KEY_CODE_YES ? (int)key : key < 128 ? (int)key : 0;
     if (ch == 0x03)
         return UI_QUIT;
 
@@ -100,6 +122,21 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
             return UI_QUIT;
         if (ch == 27 || ch == 'n' || ch == 'N')
             ui->confirm_quit = false;
+        ui->dirty = true;
+        return UI_NONE;
+    }
+
+    if (ui->show_emoji_modal) {
+        if (ch == 27)
+            ui->show_emoji_modal = false;
+        else if (ch == KEY_DOWN || ch == KEY_RIGHT || ch == '\t')
+            ui->emoji_cursor = (ui->emoji_cursor + 1) % EMOJI_COUNT;
+        else if (ch == KEY_UP || ch == KEY_LEFT)
+            ui->emoji_cursor = (ui->emoji_cursor + EMOJI_COUNT - 1) % EMOJI_COUNT;
+        else if (ch == '\n' || ch == KEY_ENTER) {
+            insert_text(ui, EMOJIS[ui->emoji_cursor].glyph);
+            ui->show_emoji_modal = false;
+        }
         ui->dirty = true;
         return UI_NONE;
     }
@@ -126,6 +163,10 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
     if (ch == KEY_F(1)) {
         ui->show_help_modal = ui->dirty = true;
         ui->help_offset = 0;
+        return UI_NONE;
+    }
+    if (ch == KEY_F(2)) {
+        ui->show_emoji_modal = ui->dirty = true;
         return UI_NONE;
     }
     if (ch == KEY_F(3) || ch == 0x17)
@@ -166,7 +207,9 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                 return 0;
             }
             {
-                int copy = ui->input_len < out_max - 1 ? ui->input_len : out_max - 1;
+                if (out_max <= ui->input_len)
+                    return UI_NONE;
+                int copy = ui->input_len;
                 memcpy(out_line, ui->input_buf, (size_t)copy);
                 out_line[copy] = '\0';
                 hist_push(ui, out_line);
@@ -180,20 +223,21 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         case 127:
         case '\b':
             if (ui->input_cursor > 0) {
-                int pos = ui->input_cursor - 1;
-                memmove(ui->input_buf + pos, ui->input_buf + pos + 1,
-                        (size_t)(ui->input_len - pos));
-                ui->input_len--;
-                ui->input_cursor--;
+                int pos = text_prev(ui->input_buf, ui->input_cursor);
+                memmove(ui->input_buf + pos, ui->input_buf + ui->input_cursor,
+                        (size_t)(ui->input_len - ui->input_cursor + 1));
+                ui->input_len -= ui->input_cursor - pos;
+                ui->input_cursor = pos;
                 ui->dirty = true;
             }
             break;
 
         case KEY_DC:
             if (ui->input_cursor < ui->input_len) {
-                memmove(ui->input_buf + ui->input_cursor, ui->input_buf + ui->input_cursor + 1,
-                        (size_t)(ui->input_len - ui->input_cursor));
-                ui->input_len--;
+                int end = text_next(ui->input_buf, ui->input_cursor);
+                memmove(ui->input_buf + ui->input_cursor, ui->input_buf + end,
+                        (size_t)(ui->input_len - end + 1));
+                ui->input_len -= end - ui->input_cursor;
                 ui->dirty = true;
             }
             break;
@@ -201,14 +245,14 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         /* In-line cursor motion */
         case KEY_LEFT:
             if (ui->input_cursor > 0) {
-                ui->input_cursor--;
+                ui->input_cursor = text_prev(ui->input_buf, ui->input_cursor);
                 ui->dirty = true;
             }
             break;
 
         case KEY_RIGHT:
             if (ui->input_cursor < ui->input_len) {
-                ui->input_cursor++;
+                ui->input_cursor = text_next(ui->input_buf, ui->input_cursor);
                 ui->dirty = true;
             }
             break;
@@ -295,13 +339,14 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
 
         /* Printable characters */
         default:
-            if (ch >= 32 && ch < 256 && ui->input_len < (int)sizeof(ui->input_buf) - 2) {
-                memmove(ui->input_buf + ui->input_cursor + 1, ui->input_buf + ui->input_cursor,
-                        (size_t)(ui->input_len - ui->input_cursor + 1));
-                ui->input_buf[ui->input_cursor] = (char)ch;
-                ui->input_len++;
-                ui->input_cursor++;
-                ui->dirty = true;
+            if (kind == OK && key >= 32 && iswprint(key)) {
+                char bytes[MB_LEN_MAX + 1];
+                mbstate_t state = {0};
+                size_t length = wcrtomb(bytes, (wchar_t)key, &state);
+                if (length != (size_t)-1) {
+                    bytes[length] = '\0';
+                    insert_text(ui, bytes);
+                }
             }
             break;
     }
