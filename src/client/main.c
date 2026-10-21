@@ -201,11 +201,6 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 model_push_room_msg(m, room, uid, nick, bn, text, ts, self,
                                     m->nick);
             }
-            /* auto-scroll to bottom if this is the active room */
-            cli_room_t *tr = model_find_room(m, room);
-            if (tr && m->active_room >= 0 && tr == &m->rooms[m->active_room]) {
-                tr->scroll_offset = 0;
-            }
             /* nick-mention highlight: sound + bell */
             if (!self && m->nick[0]) {
                 const char *check = (text[0] == '\x01') ? text + 8 : text;
@@ -247,12 +242,6 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 is_first_msg = (!existing_dm || existing_dm->msgs_len == 0);
             }
             model_push_dm_msg(m, conv_uid, conv_nick, text, ts, self);
-            /* auto-scroll to bottom if this is the active DM */
-            cli_dm_t *td = model_get_or_create_dm(m, conv_uid, conv_nick);
-            if (td && m->active_dm >= 0 && m->active_dm < m->dm_count &&
-                td == &m->dms[m->active_dm]) {
-                td->scroll_offset = 0;
-            }
             if (!self && is_first_msg) sound_play(SND_DM);
             ctx->ui->dirty = true;
             break;
@@ -345,32 +334,10 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
         case SMSG_ROOM_DELETED: {
             char name[65] = {0};
             tlv_read_str(p, pl, TAG_ROOM, name, sizeof(name));
-            /* remove from model */
-            for (int i = 0; i < m->room_count; i++) {
-                if (strcmp(m->rooms[i].name, name) == 0) {
-                    /* if it was active, fall back to first available room */
-                    if (m->active_room == i) {
-                        m->active_room = -1;
-                        for (int j = 0; j < m->room_count; j++) {
-                            if (j != i && m->rooms[j].active) {
-                                m->active_room = j; break;
-                            }
-                        }
-                    } else if (m->active_room > i) {
-                        m->active_room--;
-                    }
-                    /* compact the room array */
-                    free(m->rooms[i].msgs);
-                    memmove(&m->rooms[i], &m->rooms[i + 1],
-                            (size_t)(m->room_count - i - 1) * sizeof(cli_room_t));
-                    m->room_count--;
-                    /* re-clamp nav cursor */
-                    int total = m->room_count + m->dm_count;
-                    if (ctx->ui->nav_cursor >= total && total > 0)
-                        ctx->ui->nav_cursor = total - 1;
-                    break;
-                }
-            }
+            model_remove_room(m, name);
+            ctx->ui->nav_cursor = m->active_room >= 0 ? m->active_room
+                : m->active_dm >= 0 ? m->room_count + m->active_dm : -1;
+            ui_clamp_navigation(ctx->ui, m);
             char sb[80];
             snprintf(sb, sizeof(sb), "Room #%.60s was deleted", name);
             model_set_status(m, sb, 6);
@@ -397,18 +364,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                     if (rr) rr->owner_uid = ntohl(ow);
                 }
             }
-            /* if still not in any room, make general (or first room) active */
-            if (m->active_room < 0) {
-                int idx = -1;
-                for (int i = 0; i < m->room_count; i++) {
-                    if (strcmp(m->rooms[i].name, "general") == 0) { idx = i; break; }
-                }
-                if (idx < 0 && m->room_count > 0) idx = 0;
-                if (idx >= 0) {
-                    m->active_room = idx;
-                    m->active_dm   = -1;
-                }
-            }
+            if (m->active_room < 0 && m->active_dm < 0) model_select_fallback(m);
             ctx->ui->dirty = true;
             break;
         }
@@ -586,6 +542,22 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
 
 /* Command dispatcher */
 
+static void close_active_chat(cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
+    if (m->active_room >= 0 && m->active_room < m->room_count) {
+        cli_room_t *room = &m->rooms[m->active_room];
+        if (room->joined) client_send_leave(cc, room->name);
+        room->joined = false;
+        model_select_fallback(m);
+        model_set_status(m, "Room left. Select it again to rejoin.", 4);
+    } else if (model_close_dm(m, m->active_dm)) {
+        model_set_status(m, "DM conversation closed", 3);
+    } else model_set_status(m, "No active chat to close", 3);
+    ui->nav_cursor = m->active_room >= 0 ? m->active_room
+        : m->active_dm >= 0 ? m->room_count + m->active_dm : -1;
+    ui_clamp_navigation(ui, m);
+    ui->dirty = true;
+}
+
 static void handle_command(const char *line, cli_model_t *m,
                             client_conn_t *cc, ui_state_t *ui) {
     /* skip leading '/' */
@@ -625,10 +597,12 @@ static void handle_command(const char *line, cli_model_t *m,
         if (!*room) {
             model_set_status(m, "Usage: /join <roomname>", 4);
         } else {
-        /* clear stale history so server replay won't duplicate */
-        model_clear_room_msgs(m, room);
-        client_send_join(cc, room);
-        /* optimistically set active room */
+        /* Rejoining requests a replay; selecting a joined room keeps its buffer. */
+        cli_room_t *existing = model_find_room(m, room);
+        if (!existing || !existing->joined) {
+            model_clear_room_msgs(m, room);
+            client_send_join(cc, room);
+        }
         cli_room_t *r = model_get_or_create_room(m, room);
         if (r) {
             r->joined = true;
@@ -646,8 +620,12 @@ static void handle_command(const char *line, cli_model_t *m,
             room = m->rooms[m->active_room].name;
         if (*room) {
             client_send_leave(cc, room);
+            cli_room_t *left = model_find_room(m, room);
+            if (left) left->joined = false;
             char sb[80]; snprintf(sb, sizeof(sb), "Left #%.64s", room);
             model_set_status(m, sb, 4);
+            if (left && m->active_room >= 0 && left == &m->rooms[m->active_room])
+                model_select_fallback(m);
         } else {
             model_set_status(m, "Not in any room", 3);
         }
@@ -785,29 +763,22 @@ static void handle_command(const char *line, cli_model_t *m,
         } else {
             model_set_status(m, "Usage: /delroom <name>", 4);
         }
+    } else if (strcmp(cmd, "close") == 0) {
+        close_active_chat(m, cc, ui);
+    } else if (strcmp(cmd, "latest") == 0) {
+        if (m->active_room >= 0) m->rooms[m->active_room].scroll_offset = 0;
+        else if (m->active_dm >= 0) m->dms[m->active_dm].scroll_offset = 0;
     } else if (strncmp(cmd, "closedm", 7) == 0) {
-        /* /closedm [nick]  -  remove a DM conversation from the sidebar */
         const char *nick = (strlen(cmd) > 8) ? cmd + 8 : "";
-        bool found = false;
-        for (int i = 0; i < m->dm_count; i++) {
-            if (!*nick || strcmp(m->dms[i].peer_nick, nick) == 0) {
-                if (m->active_dm == i) {
-                    m->active_dm   = -1;
-                    /* fall back to first room, or -1 if none exist */
-                    m->active_room = (m->room_count > 0) ? 0 : -1;
-                }
-                else if (m->active_dm > i) m->active_dm--;
-                free(m->dms[i].msgs);
-                memmove(&m->dms[i], &m->dms[i + 1],
-                        (size_t)(m->dm_count - i - 1) * sizeof(cli_dm_t));
-                m->dm_count--;
-                found = true;
-                break;
-            }
+        int index = m->active_dm;
+        if (*nick) {
+            index = -1;
+            for (int i = 0; i < m->dm_count; i++)
+                if (!strcmp(m->dms[i].peer_nick, nick)) { index = i; break; }
         }
-        if (found) model_set_status(m, "DM conversation closed", 3);
-        else        model_set_status(m, !*nick ? "Usage: /closedm <nick>" : "No such DM", 3);
-        ui->dirty = true;
+        bool closed = model_close_dm(m, index);
+        model_set_status(m, closed ? "DM conversation closed" : "No matching DM to close", 3);
+        ui_clamp_navigation(ui, m);
     } else if (strcmp(cmd, "rooms") == 0) {
         client_send_list_rooms(cc);
         model_set_status(m, "Fetching room list...", 3);
@@ -932,17 +903,20 @@ int main(int argc, char **argv) {
 
         /* keyboard (non-blocking) */
         int kr;
-        while ((kr = ui_input_tick(&ui, input_line, sizeof(input_line))) != ERR) {
-            /* clamp nav_cursor to valid range after every keystroke */
-            {
-                int total = model.room_count + model.dm_count;
-                if (total > 0 && ui.nav_cursor >= total)
-                    ui.nav_cursor = total - 1;
-                if (ui.nav_cursor < 0 && total > 0)
-                    ui.nav_cursor = 0;
+        while ((kr = ui_input_tick(&ui, &model, input_line, sizeof(input_line))) != ERR) {
+            ui_clamp_navigation(&ui, &model);
+            if (kr == UI_RESIZE) { ui_resize(&ui); continue; }
+            if (kr == UI_QUIT) { g_quit = 1; break; }
+            if (kr == UI_CLOSE) { close_active_chat(&model, &cc, &ui); continue; }
+            if (kr == UI_LATEST) {
+                if (model.active_room >= 0) model.rooms[model.active_room].scroll_offset = 0;
+                else if (model.active_dm >= 0) model.dms[model.active_dm].scroll_offset = 0;
+                ui.dirty = true;
+                continue;
             }
+            if (kr == UI_SCROLL) { ui_scroll(&ui, &model, ui.scroll_delta); continue; }
 
-            if (kr == 1) {
+            if (kr == UI_LINE) {
                 /* Enter: command or message */
                 if (input_line[0] == '/') {
                     handle_command(input_line, &model, &cc, &ui);
@@ -962,7 +936,7 @@ int main(int argc, char **argv) {
                         ui.dirty = true;
                     }
                 }
-            } else if (kr == 0) {
+            } else if (kr == UI_NONE) {
                 /* regular keystroke -  send typing notification (throttled) */
                 time_t now = time(NULL);
                 if (model.status == CLI_ONLINE &&
@@ -973,22 +947,23 @@ int main(int argc, char **argv) {
                     client_send_typing(&cc, room);
                     last_typing_sent = now;
                 }
-            } else if (kr == 2) {
+            } else if (kr == UI_PAGE_UP) {
                 /* PgUp -  scroll up one full page */
                 int page = ui.layout.chat_h - 2;
                 if (page < 3) page = 3;
                 ui_scroll(&ui, &model, page);
-            } else if (kr == 3) {
+            } else if (kr == UI_PAGE_DOWN) {
                 /* PgDn -  scroll down one full page */
                 int page = ui.layout.chat_h - 2;
                 if (page < 3) page = 3;
                 ui_scroll(&ui, &model, -page);
-            } else if (kr == 4) {
+            } else if (kr == UI_SELECT) {
                 /* nav-enter: switch to / join the room or DM at nav_cursor */
                 int nc = ui.nav_cursor;
                 if (nc >= 0 && nc < model.room_count) {
                     const char *rname = model.rooms[nc].name;
                     if (!model.rooms[nc].joined) {
+                        model_clear_room_msgs(&model, rname);
                         client_send_join(&cc, rname);
                         model.rooms[nc].joined = true;
                     }

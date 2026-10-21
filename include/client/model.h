@@ -26,6 +26,7 @@ typedef struct {
     uint32_t owner_uid;
     cli_msg_t *msgs;
     int msgs_cap, msgs_head, msgs_len, unread, scroll_offset;
+    int view_width;
     char typing_nick[CLI_NICK_MAX];
     time_t typing_until;
 } cli_room_t;
@@ -34,6 +35,7 @@ typedef struct {
     char peer_nick[CLI_NICK_MAX];
     cli_msg_t *msgs;
     int msgs_cap, msgs_head, msgs_len, unread, scroll_offset;
+    int view_width;
 } cli_dm_t;
 typedef struct { uint32_t user_id; char nick[CLI_NICK_MAX]; } cli_user_t;
 typedef struct {
@@ -81,3 +83,6 @@ void model_push_dm_msg(cli_model_t *m, uint32_t uid, const char *nick,
 void model_set_status(cli_model_t *m, const char *msg, int secs);
 void model_update_users(cli_model_t *m, const char *room,
                         cli_user_t *users, int count);
+void model_select_fallback(cli_model_t *m);
+bool model_close_dm(cli_model_t *m, int index);
+bool model_remove_room(cli_model_t *m, const char *name);

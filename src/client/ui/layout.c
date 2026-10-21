@@ -6,6 +6,8 @@
 #include <string.h>
 #include <locale.h>
 #include <ncurses.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "client/ui.h"
 
@@ -14,19 +16,24 @@
 #define USERS_W_MIN  14
 #define USERS_W_PCT  14
 
-static void compute_layout(ui_layout_t *l, bool show_users) {
-    getmaxyx(stdscr, l->rows, l->cols);
+void ui_compute_layout(ui_layout_t *l, int rows, int cols, bool show_users) {
+    memset(l, 0, sizeof(*l));
+    l->rows = rows;
+    l->cols = cols;
+    l->too_small = rows < 8 || cols < 40;
+    if (l->too_small) return;
 
     l->rooms_w = l->cols * ROOMS_W_PCT / 100;
     if (l->rooms_w < ROOMS_W_MIN) l->rooms_w = ROOMS_W_MIN;
     if (l->rooms_w > 24) l->rooms_w = 24;
+    if (cols < 60) l->rooms_w = 0;
 
     l->users_w = show_users ? (l->cols * USERS_W_PCT / 100) : 0;
     if (show_users && l->users_w < USERS_W_MIN) l->users_w = USERS_W_MIN;
+    if (cols < 100) l->users_w = 0;
 
     l->chat_w  = l->cols - l->rooms_w - l->users_w;
-    if (l->chat_w < 20) l->chat_w = 20;
-    l->chat_h  = l->rows - 3;   /* minus topbar, topic bar, and input */
+    l->chat_h = rows - 4;
 }
 
 static void destroy_windows(ui_state_t *ui) {
@@ -40,6 +47,7 @@ static void destroy_windows(ui_state_t *ui) {
 
 static void create_windows(ui_state_t *ui) {
     const ui_layout_t *l = &ui->layout;
+    if (l->too_small) return;
 
     /* topbar: row 0, full width */
     ui->win_topbar = newwin(1, l->cols, 0, 0);
@@ -48,7 +56,8 @@ static void create_windows(ui_state_t *ui) {
     ui->win_topic  = newwin(1, l->cols, 1, 0);
 
     /* rooms pane: rows 2..chat_h+1, col 0..rooms_w */
-    ui->win_rooms  = newwin(l->chat_h, l->rooms_w, 2, 0);
+    if (l->rooms_w > 0)
+        ui->win_rooms = newwin(l->chat_h, l->rooms_w, 2, 0);
 
     /* chat pane: rows 2..chat_h+1, col rooms_w..rooms_w+chat_w */
     ui->win_chat   = newwin(l->chat_h, l->chat_w, 2, l->rooms_w);
@@ -61,21 +70,34 @@ static void create_windows(ui_state_t *ui) {
     /* input line: last row */
     ui->win_input  = newwin(1, l->cols, l->rows - 1, 0);
 
-    scrollok((WINDOW *)ui->win_chat, FALSE);  /* we handle scrolling manually */
+    if (!ui->win_topbar || !ui->win_topic || !ui->win_chat || !ui->win_input ||
+        (l->rooms_w && !ui->win_rooms) || (l->users_w && !ui->win_users)) {
+        destroy_windows(ui);
+        ui->layout.too_small = true;
+        return;
+    }
+    scrollok((WINDOW *)ui->win_chat, FALSE);
 }
 
 int ui_init(ui_state_t *ui) {
     memset(ui, 0, sizeof(*ui));
     ui->hist_idx   = -1;
     ui->show_users = true;
+    ui->nav_cursor = -1;
 
     setlocale(LC_ALL, "");
     initscr();
-    cbreak();
+    raw();  /* Ctrl+Q must reach the client rather than terminal flow control. */
     noecho();
     keypad(stdscr, TRUE);
     nodelay(stdscr, TRUE);
     curs_set(1);
+    mousemask(BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON4_PRESSED
+#ifdef BUTTON5_PRESSED
+              | BUTTON5_PRESSED
+#endif
+              , NULL);
+    mouseinterval(0);
 
     if (has_colors()) {
         start_color();
@@ -99,7 +121,7 @@ int ui_init(ui_state_t *ui) {
         init_pair(16, COLOR_YELLOW,  -1);  /* away tag */
     }
 
-    compute_layout(&ui->layout, ui->show_users);
+    ui_compute_layout(&ui->layout, getmaxy(stdscr), getmaxx(stdscr), ui->show_users);
     create_windows(ui);
     ui->dirty = true;
     return 0;
@@ -116,11 +138,14 @@ void ui_free(ui_state_t *ui) {
 }
 
 void ui_resize(ui_state_t *ui) {
-    endwin();
-    refresh();
-    clear();
+    struct winsize size;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_row && size.ws_col &&
+        (size.ws_row != getmaxy(stdscr) || size.ws_col != getmaxx(stdscr)))
+        resizeterm(size.ws_row, size.ws_col);
     destroy_windows(ui);
-    compute_layout(&ui->layout, ui->show_users);
+    erase();
+    clearok(stdscr, TRUE);
+    ui_compute_layout(&ui->layout, getmaxy(stdscr), getmaxx(stdscr), ui->show_users);
     create_windows(ui);
     ui->dirty = true;
 }

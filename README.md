@@ -163,6 +163,8 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 | `/me <text>` | Send an action message (* nick text) |
 | `/dm <nick> <message>` | Send a direct message |
 | `/closedm <nick>` | Remove a DM from the sidebar |
+| `/close` | Close the active DM or leave the active room |
+| `/latest` | Return the active chat to its newest messages |
 
 **Users**
 
@@ -203,7 +205,26 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 | `Ctrl+K` | Delete from cursor to end of line |
 | `Left` / `Right` | Move input cursor |
 | `Delete` | Delete character under cursor |
-| Any key | Dismiss help modal |
+| `Esc` | Dismiss help modal |
+| `F1` | Open help; Up/Down scroll it |
+| `F3` / `Ctrl+W` | Close the active chat |
+| `F4` | Return to the newest messages |
+| `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
+| `Ctrl+L` | Redraw the terminal |
+
+Click a chat in the sidebar to select it. The mouse wheel scrolls the chat
+under the pointer. The footer has Close, Help, Latest, and Quit buttons;
+clicking the input line moves the cursor. Mouse support depends on your
+terminal. Hold Shift while dragging if your terminal uses that to select text.
+
+Each room and DM retains up to 500 messages during the session. Page Up,
+Page Down, and the mouse wheel move through wrapped lines. New messages
+keep your place while you read older history. F4 or `/latest` returns to
+live chat. This buffer is separate from the history replay sent by the server.
+
+The user sidebar hides below 100 columns; the chat sidebar hides below 60.
+Below 40 columns or 8 rows, a resize notice replaces the panes. Your draft,
+selected chat, and history remain available when the terminal grows again.
 
 ## Tests
 
@@ -218,6 +239,8 @@ Test suite:
 - `tests/proto/test_frame.c` - frame encode/decode
 - `tests/proto/test_tlv.c` - TLV read/write
 - `tests/server/test_rate_limit.c` - token-bucket rate limiter
+- `tests/client/test_ui.c` - layout, scrollback, conversation selection, mouse controls, and resize recovery
+- `tests/client/test_terminal.py` - resize signals and mouse input through a terminal pair
 
 Smoke test (requires a running server and `python3`/`nc`):
 

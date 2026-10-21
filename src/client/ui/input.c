@@ -1,20 +1,6 @@
-/*
- * src/client/ui/input.c -  keyboard input, command history, sidebar nav
- *
- * Return values from ui_input_tick():
- *   ERR  -  no key available (non-blocking)
- *   0    -  key consumed, model unchanged
- *   1    -  Enter pressed with text: *out_line filled, ready to send/dispatch
- *   2    -  Page-Up pressed: caller should scroll chat up
- *   3    -  Page-Down pressed: caller should scroll chat down
- *   4    -  Nav-Enter: confirm nav_cursor selection (caller joins/switches)
- *
- * Sidebar navigation (rooms / DM list):
- *   When the input buffer is EMPTY:
- *     UP / DOWN      -  move nav_cursor through rooms then DMs
- *     Enter          -  confirm selection (return 4)
- *   Tab / Shift-Tab  -  always move nav_cursor (regardless of input content)
- *   Any printable    -  starts/continues typing; nav_cursor is unaffected
+/* Keyboard and mouse input. UI_* actions are handled by the main loop.
+ * Editing a draft does not switch chats. Sidebar navigation selects a chat
+ * only after Enter or a click; resize and modal keys keep the draft intact.
  */
 
 #include <stdlib.h>
@@ -22,6 +8,44 @@
 #include <ncurses.h>
 
 #include "client/ui.h"
+#include "client/history.h"
+
+void ui_clamp_navigation(ui_state_t *ui, const cli_model_t *m) {
+    int total = m->room_count + m->dm_count;
+    if (!total) ui->nav_cursor = -1;
+    else {
+        if (ui->nav_cursor < 0) ui->nav_cursor = 0;
+        if (ui->nav_cursor >= total) ui->nav_cursor = total - 1;
+    }
+    int visible = ui->layout.chat_h - 1;
+    if (visible < 1) visible = 1;
+    if (ui->sidebar_offset > ui->nav_cursor) ui->sidebar_offset = ui->nav_cursor;
+    if (ui->nav_cursor >= ui->sidebar_offset + visible)
+        ui->sidebar_offset = ui->nav_cursor - visible + 1;
+    if (ui->sidebar_offset < 0) ui->sidebar_offset = 0;
+}
+
+int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
+    if (x < 0 || y < 0 || x >= ui->layout.cols || y >= ui->layout.rows ||
+        ui->layout.too_small) return UI_NONE;
+    if (y == ui->layout.rows - 2) {
+        if (x < 7) return UI_CLOSE;
+        if (x >= 8 && x < 14) { ui->show_help_modal = true; ui->help_offset = 0; }
+        if (x >= 15 && x < 23) return UI_LATEST;
+        if (x >= 24 && x < 30) ui->confirm_quit = true;
+    } else if (y >= 3 && y < 2 + ui->layout.chat_h && x < ui->layout.rooms_w - 1) {
+        int index = ui->sidebar_offset + y - 3;
+        if (index < m->room_count + m->dm_count) {
+            ui->nav_cursor = index;
+            return UI_SELECT;
+        }
+    } else if (y == ui->layout.rows - 1 && x >= 2) {
+        ui->input_cursor = ui->input_offset + x - 2;
+        if (ui->input_cursor > ui->input_len) ui->input_cursor = ui->input_len;
+    }
+    ui->dirty = true;
+    return UI_NONE;
+}
 
 /* Command history */
 
@@ -49,15 +73,58 @@ static void input_clear(ui_state_t *ui) {
 
 /* Main tick */
 
-int ui_input_tick(ui_state_t *ui, char *out_line, int out_max) {
+int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_max) {
     int ch = getch();
     if (ch == ERR) return ERR;
+    if (ch == 0x03) return UI_QUIT;
+
+    if (ch == KEY_RESIZE || ch == 0x0c) return UI_RESIZE;
+    if (ui->confirm_quit) {
+        if (ch == '\n' || ch == KEY_ENTER) return UI_QUIT;
+        if (ch == 27 || ch == 'n' || ch == 'N') ui->confirm_quit = false;
+        ui->dirty = true;
+        return UI_NONE;
+    }
 
     /* Any key dismisses the help modal */
     if (ui->show_help_modal) {
-        ui->show_help_modal = false;
+        if (ch == KEY_DOWN || ch == KEY_NPAGE) ui->help_offset++;
+        else if (ch == KEY_UP || ch == KEY_PPAGE) {
+            if (ui->help_offset > 0) ui->help_offset--;
+        } else ui->show_help_modal = false;
         ui->dirty = true;
         return 0;
+    }
+
+    if (ch == KEY_F(10) || ch == 0x11) {
+        ui->confirm_quit = ui->dirty = true;
+        return UI_NONE;
+    }
+    if (ui->layout.too_small) return UI_NONE;
+    if (ch == KEY_F(1)) {
+        ui->show_help_modal = ui->dirty = true;
+        ui->help_offset = 0;
+        return UI_NONE;
+    }
+    if (ch == KEY_F(3) || ch == 0x17) return UI_CLOSE;
+    if (ch == KEY_F(4)) return UI_LATEST;
+    if (ch == KEY_MOUSE) {
+        MEVENT event;
+        if (getmouse(&event) != OK) return UI_NONE;
+        if (event.x >= 0 && event.x < ui->layout.cols &&
+            event.y >= 2 && event.y < 2 + ui->layout.chat_h &&
+            event.x >= ui->layout.rooms_w &&
+            event.x < ui->layout.rooms_w + ui->layout.chat_w) {
+            ui->scroll_delta = 0;
+            if (event.bstate & BUTTON4_PRESSED) ui->scroll_delta = 3;
+#ifdef BUTTON5_PRESSED
+            if (event.bstate & BUTTON5_PRESSED) ui->scroll_delta = -3;
+#endif
+            if (ui->scroll_delta) return UI_SCROLL;
+        }
+        if (event.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED))
+            return ui_click(ui, m, event.x, event.y);
+        return UI_NONE;
     }
 
     switch (ch) {
@@ -211,17 +278,23 @@ int ui_input_tick(ui_state_t *ui, char *out_line, int out_max) {
 /* Scroll */
 
 void ui_scroll(ui_state_t *ui, cli_model_t *m, int delta) {
+    const cli_msg_t *buf = NULL;
+    int cap = 0, head = 0, len = 0, *offset = NULL;
     if (m->active_room >= 0 && m->active_room < m->room_count) {
         cli_room_t *r = &m->rooms[m->active_room];
-        r->scroll_offset += delta;
-        if (r->scroll_offset < 0) r->scroll_offset = 0;
-        int max_scroll = r->msgs_len - 1;
-        if (max_scroll < 0) max_scroll = 0;
-        if (r->scroll_offset > max_scroll) r->scroll_offset = max_scroll;
+        buf = r->msgs; cap = r->msgs_cap; head = r->msgs_head; len = r->msgs_len;
+        offset = &r->scroll_offset;
     } else if (m->active_dm >= 0 && m->active_dm < m->dm_count) {
         cli_dm_t *d = &m->dms[m->active_dm];
-        d->scroll_offset += delta;
-        if (d->scroll_offset < 0) d->scroll_offset = 0;
+        buf = d->msgs; cap = d->msgs_cap; head = d->msgs_head; len = d->msgs_len;
+        offset = &d->scroll_offset;
+    }
+    if (offset) {
+        int maximum = history_total_rows(buf, cap, head, len, ui->layout.chat_w, m)
+                    - (ui->layout.chat_h - 1);
+        if (maximum < 0) maximum = 0;
+        long next = (long)*offset + delta;
+        *offset = next < 0 ? 0 : next > maximum ? maximum : (int)next;
     }
     ui->dirty = true;
 }
