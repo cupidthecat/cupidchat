@@ -185,6 +185,19 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 | `/login <nick> <password>` | Log in to an existing account |
 | `/logout` | Return to a guest session |
 
+Rooms created while logged in belong to that account across reconnects and
+server restarts. Logging out removes your account's deletion permission until
+you log in again. Renaming keeps your account identity. Each account can have
+one active login.
+
+A guest owns a room only for the connection that created it. The room, topic,
+and history remain after the guest disconnects, but ordinary clients cannot
+delete it. Logging in does not adopt rooms created earlier as a guest.
+
+Rooms saved before account ownership was introduced become unowned on upgrade.
+Their old connection IDs cannot reliably identify an account. Operators can
+assign those rooms after checking ownership; see [deployment](deploy/README.md).
+
 **Other**
 
 | Command | Description |

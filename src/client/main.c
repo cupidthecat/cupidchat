@@ -490,6 +490,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             char sb[80];
             snprintf(sb, sizeof(sb), "Registered & logged in as %.32s", new_nick);
             model_set_status(m, sb, 8);
+            client_send_list_rooms(cc);
             ctx->ui->dirty = true;
             break;
         }
@@ -506,6 +507,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             char sb[80];
             snprintf(sb, sizeof(sb), "Logged in as %.32s", new_nick);
             model_set_status(m, sb, 8);
+            client_send_list_rooms(cc);
             ctx->ui->dirty = true;
             break;
         }
@@ -516,6 +518,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             snprintf(m->nick, sizeof(m->nick), "%s", guest_nick);
             snprintf(m->base_nick, sizeof(m->base_nick), "%s", guest_nick);
             model_set_status(m, "Logged out - back to guest session", 6);
+            client_send_list_rooms(cc);
             ctx->ui->dirty = true;
             break;
         }

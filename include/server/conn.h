@@ -25,6 +25,7 @@ typedef struct {
     transport_t *transport;
     conn_state_t state;
     uint32_t user_id;
+    uint64_t account_id;
     char nick[MAX_NICK_LEN + 1], base_nick[MAX_NICK_LEN + 1];
     bool registered, is_away;
     char away_msg[256];

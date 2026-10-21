@@ -135,7 +135,7 @@ static int handle_join(conn_t *c, const frame_t *f, server_state_t *s) {
         return send_error(c, ERR_PROTOCOL, "invalid room name (a-z A-Z 0-9 _ -)", s);
 
     bool is_new = (server_find_room(s, room_name) < 0);
-    int ri = server_get_or_create_room(s, room_name, c->user_id);
+    int ri = server_get_or_create_room(s, room_name, c->user_id, c->account_id);
     if (ri < 0)
         return send_error(c, ERR_UNKNOWN, "too many rooms", s);
 
@@ -392,7 +392,7 @@ static int handle_list_rooms(conn_t *c, const frame_t *f, server_state_t *s) {
     for (int i = 0; i < s->room_count; i++) {
         if (s->rooms[i] && s->rooms[i]->active) {
             tlv_put_str(&b, TAG_ROOM, s->rooms[i]->name);
-            tlv_put_u32(&b, TAG_OWNER_UID, s->rooms[i]->owner_uid);
+            tlv_put_u32(&b, TAG_OWNER_UID, server_room_owner_uid(s, s->rooms[i]));
         }
     }
     uint32_t plen;
@@ -456,18 +456,19 @@ static int handle_delete_room(conn_t *c, const frame_t *f, server_state_t *s) {
 
     room_t *r = s->rooms[ri];
 
-    /* system rooms (owner_uid == 0) can never be deleted */
-    if (r->owner_uid == 0)
+    if (!strcmp(r->name, "general") || !strcmp(r->name, "random"))
         return send_error(c, ERR_PERMISSION_DENIED, "cannot delete a system room", s);
-
-    if (r->owner_uid != c->user_id)
+    bool owns = r->owner_account_id ? c->account_id == r->owner_account_id
+                                    : r->owner_uid && c->user_id == r->owner_uid;
+    if (!owns)
         return send_error(c, ERR_PERMISSION_DENIED, "you do not own this room", s);
 
     LOG_INFO("fd=%d nick=%s deleting room #%s", c->fd, c->nick, room_name);
 
     /* server_delete_room broadcasts SMSG_ROOM_DELETED to ALL authed clients,
      * strips membership, persists the deletion, and frees the room. */
-    server_delete_room(s, ri);
+    if (server_delete_room(s, ri) < 0)
+        return send_error(c, ERR_UNKNOWN, "could not delete room", s);
     return 0;
 }
 
@@ -564,6 +565,8 @@ static int handle_nick(conn_t *c, const frame_t *f, server_state_t *s) {
 /* Handler: CMSG_REGISTER */
 
 static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
+    if (!rate_consume(&c->rate))
+        return send_error(c, ERR_RATE_LIMITED, "slow down", s);
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256] = {0};
     tlv_read_str(f->payload, f->hdr.length, TAG_NICK, nick, sizeof(nick));
@@ -581,16 +584,20 @@ static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
     if (existing && existing != c)
         return send_error(c, ERR_NICK_TAKEN, "nick already in use by a connected user", s);
 
-    if (!db_register_user(s->db, nick, pass))
+    uint64_t account_id = db_register_account(s->db, nick, pass);
+    if (!account_id)
         return send_error(c, ERR_USER_EXISTS, "account already exists", s);
 
     c->registered = true;
+    c->account_id = account_id;
     return server_do_rename(c, nick, SMSG_REGISTER_OK, s);
 }
 
 /* Handler: CMSG_LOGIN */
 
 static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
+    if (!rate_consume(&c->rate))
+        return send_error(c, ERR_RATE_LIMITED, "slow down", s);
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256] = {0};
     tlv_read_str(f->payload, f->hdr.length, TAG_NICK, nick, sizeof(nick));
@@ -603,8 +610,13 @@ static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
     if (!pass[0])
         return send_error(c, ERR_PROTOCOL, "password required", s);
 
-    if (!db_authenticate_user(s->db, nick, pass))
+    uint64_t account_id = db_authenticate_account(s->db, nick, pass);
+    if (!account_id)
         return send_error(c, ERR_AUTH_FAILED, "incorrect username or password", s);
+
+    conn_t *signed_in = server_find_by_account(s, account_id);
+    if (signed_in && signed_in != c)
+        return send_error(c, ERR_NICK_TAKEN, "account already logged in elsewhere", s);
 
     /* check nick not taken by another live connection */
     conn_t *existing = server_find_by_nick(s, nick);
@@ -612,6 +624,7 @@ static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
         return send_error(c, ERR_NICK_TAKEN, "account already logged in elsewhere", s);
 
     c->registered = true;
+    c->account_id = account_id;
     return server_do_rename(c, nick, SMSG_LOGIN_OK, s);
 }
 
@@ -624,8 +637,14 @@ static int handle_logout(conn_t *c, const frame_t *f, server_state_t *s) {
 
     char guest_nick[MAX_NICK_LEN + 1];
     snprintf(guest_nick, sizeof(guest_nick), "guest_%u", c->user_id);
+    conn_t *existing = server_find_by_nick(s, guest_nick);
+    while (existing && existing != c) {
+        snprintf(guest_nick, sizeof(guest_nick), "guest_%u", server_next_uid(s));
+        existing = server_find_by_nick(s, guest_nick);
+    }
 
     c->registered = false;
+    c->account_id = 0;
     return server_do_rename(c, guest_nick, SMSG_LOGOUT_OK, s);
 }
 
@@ -644,10 +663,10 @@ static int handle_set_topic(conn_t *c, const frame_t *f, server_state_t *s) {
     if (ri < 0 || !conn_is_room_member(c, ri))
         return send_error(c, ERR_NOT_IN_ROOM, "not in room", s);
 
+    if (db_set_room_topic(s->db, room_name, topic) < 0)
+        return send_error(c, ERR_UNKNOWN, "could not save topic", s);
     snprintf(s->rooms[ri]->topic, sizeof(s->rooms[ri]->topic), "%s", topic);
     snprintf(s->rooms[ri]->topic_set_by, sizeof(s->rooms[ri]->topic_set_by), "%s", c->nick);
-
-    db_persist_room(s->db, room_name, topic, s->rooms[ri]->owner_uid);
 
     /* broadcast the new topic to every room member */
     tlv_builder_t b;

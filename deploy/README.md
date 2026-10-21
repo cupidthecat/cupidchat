@@ -63,6 +63,30 @@ Windows users can run the Linux client through WSL.
 
 ## Data and operations
 
+### Ownership migration
+
+Back up the database with SQLite's backup API before upgrading. The schema adds
+`rooms.owner_account_id`, which references `users.id`. Existing `owner_uid`
+values remain in the database for review but do not grant permissions. Existing
+rooms, topics, and messages remain available. Guest ownership ends when its
+connection closes; account ownership persists.
+
+To assign a legacy room after confirming its owner, stop the service and use a
+SQLite transaction. Substitute the verified account and room names below:
+
+```sql
+BEGIN IMMEDIATE;
+UPDATE rooms
+SET owner_account_id = (SELECT id FROM users WHERE username = 'verified_account' COLLATE NOCASE)
+WHERE name = 'verified_room' AND owner_account_id IS NULL;
+SELECT name, owner_uid, owner_account_id FROM rooms WHERE name = 'verified_room';
+COMMIT;
+```
+
+Check the result before committing; use `ROLLBACK` if it is wrong. Restart the
+service to reload the assignment. Do not map an old `owner_uid` directly to an
+account ID: the two number spaces are unrelated.
+
 The database is `/var/lib/cupidchat/cupidchat.db`. Include this guest in
 your normal Proxmox backup schedule. For a database-only live backup, use
 SQLite's `.backup` command so the WAL contents are included; copying just
