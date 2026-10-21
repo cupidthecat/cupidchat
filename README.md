@@ -306,7 +306,7 @@ the current holder of that nickname.
 
 `/motd` and `/banner` show the current server messages. A banner stays in the
 topic bar until an admin clears it. MOTD updates reach connected users and are
-shown to new sign-ins. Banners, MOTD changes, and new polls play a short notice
+shown to new sign-ins. Banners, MOTD changes, and poll openings and closings play a short notice
 tone; `/sound off` mutes it with the other notifications.
 
 F8 or `/poll` opens the latest server poll. Arrows or 1-4 select a choice;

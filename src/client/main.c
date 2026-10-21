@@ -404,7 +404,13 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             }
             if (!valid || (poll.id && poll.option_count < 2))
                 break;
+            bool just_closed = poll.id && poll.id == m->poll.id && poll.closed && !m->poll.closed;
             m->poll = poll;
+            if (just_closed) {
+                server_text(m, "[Server] Poll closed. F8 shows the final results.");
+                model_set_status(m, "Poll closed: F8 for final results", 10);
+                sound_play(SND_NOTICE);
+            }
             if (personal && ctx->ui->poll_requested) {
                 ctx->ui->poll_requested = false;
                 if (poll.id) {
@@ -1685,8 +1691,9 @@ int main(int argc, char **argv) {
             } else if (kr == UI_NONE) {
                 /* regular keystroke -  send typing notification (throttled) */
                 time_t now = time(NULL);
-                if (model.status == CLI_ONLINE && !model.is_muted && model.active_room >= 0 &&
-                    ui.input_len > 0 && now - last_typing_sent >= 2) {
+                if (model.status == CLI_ONLINE && !model.is_muted && !ui.show_profile &&
+                    !ui.show_poll && !ui.show_buddies_modal && !ui.show_help_modal &&
+                    model.active_room >= 0 && ui.input_len > 0 && now - last_typing_sent >= 2) {
                     const char *room = model.rooms[model.active_room].name;
                     client_send_typing(&cc, room);
                     last_typing_sent = now;

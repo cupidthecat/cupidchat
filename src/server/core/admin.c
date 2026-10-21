@@ -217,6 +217,9 @@ int server_admin_command(server_state_t *s, conn_t *c, const frame_t *f) {
     if (!strcmp(action, "poll"))
         return create_poll(s, c, body);
     if (!strcmp(action, "pollclose")) {
+        poll_info_t current;
+        if (db_get_poll(s->db, 0, 0, &current) != 1 || current.closed)
+            return fail(s, c, ERR_UNKNOWN, "There is no open poll to close");
         if (db_close_poll(s->db) < 0)
             return fail(s, c, ERR_UNKNOWN, "Could not close poll");
         return broadcast_poll(s, false);
