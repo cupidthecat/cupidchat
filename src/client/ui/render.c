@@ -347,7 +347,7 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
             snprintf(status, sizeof(status), " %.32s is typing...", r->typing_nick);
     }
     wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-    char combined[512];
+    char combined[640];
     if (m->status_msg[0])
         snprintf(combined, sizeof(combined), "%s | %s", *offset ? status : m->status_msg,
                  *offset ? m->status_msg : status);
