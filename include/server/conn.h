@@ -31,7 +31,7 @@ typedef struct {
     char away_msg[256];
     frame_parser_t parser;
     rate_bucket_t rate;
-    time_t last_active, ping_sent_at;
+    time_t last_active, ping_sent_at, close_deadline;
     bool ping_pending, want_write;
     obuf_node_t *obuf_head, *obuf_tail;
     size_t obuf_bytes;
