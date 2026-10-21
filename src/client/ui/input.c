@@ -46,7 +46,7 @@ int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
             return ui_profile_target(ui, ui->name_hits[i].uid, ui->name_hits[i].nick, NULL);
     if (y == 0)
         return ui_profile_target(ui, 0, NULL, m->base_nick);
-    if (y == 1 && m->active_dm >= 0 && m->active_dm < m->dm_count)
+    if (y == 1 && !m->banner[0] && m->active_dm >= 0 && m->active_dm < m->dm_count)
         return ui_profile_target(ui, m->dms[m->active_dm].peer_uid, m->dms[m->active_dm].peer_nick,
                                  NULL);
     if (ui->show_users && x >= ui->layout.cols - ui->layout.users_w && y >= 3 &&
@@ -196,6 +196,8 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
             return ch == 0x11 ? UI_QUIT : UI_NONE;
         return ui_auth_input(ui, ch, key, kind == OK);
     }
+    if (ui->show_poll)
+        return ui_poll_input(ui, m, ch);
     if (ui->show_profile)
         return ui_profile_input(ui, m, ch, key, kind == OK);
     if (ui->confirm_quit) {
@@ -299,6 +301,8 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return UI_LATEST;
     if (ch == KEY_F(5))
         return UI_NEXT_UNREAD;
+    if (ch == KEY_F(8))
+        return UI_POLL_OPEN;
     if (ch == KEY_F(7))
         return ui_profile_target(ui, 0, NULL, m->base_nick);
     if (ch == KEY_F(6))

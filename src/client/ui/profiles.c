@@ -233,12 +233,13 @@ void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
         int count = 0;
         snprintf(lines[count++], 768, "%s",
                  p->fields.display_name[0] ? p->fields.display_name : p->account);
-        snprintf(lines[count++], 768, "Account: %s | %s%s%s", p->account,
+        snprintf(lines[count++], 768, "Account: %s%s | %s%s%s", p->account,
+                 p->is_admin ? " [admin]" : "",
                  !p->presence       ? "offline"
                  : p->presence == 2 ? "away"
                                     : "online",
                  p->nick[0] ? " | @" : "", p->nick);
-        time_t joined = (time_t)p->member_since;
+        time_t joined = (time_t)(p->member_since / 1000);
         struct tm date;
         char since[32] = "unknown";
         if (joined && localtime_r(&joined, &date))

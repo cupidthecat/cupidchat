@@ -484,3 +484,26 @@ int client_save_profile(client_conn_t *cc, uint32_t request, const profile_field
     tlv_builder_free(&b);
     return rc;
 }
+
+int client_send_admin(client_conn_t *cc, const char *action, const char *account,
+                      const char *body) {
+    tlv_builder_t b;
+    tlv_builder_init(&b);
+    int rc = -1;
+    if (tlv_put_str(&b, TAG_ADMIN_ACTION, action) == 0 &&
+        (!account || tlv_put_str(&b, TAG_BASE_NICK, account) == 0) &&
+        tlv_put_str(&b, TAG_TEXT, body ? body : "") == 0)
+        rc = client_send_frame(cc, CMSG_ADMIN, b.buf, (uint32_t)b.len);
+    tlv_builder_free(&b);
+    return rc;
+}
+
+int client_send_poll(client_conn_t *cc, uint64_t id, uint32_t choice) {
+    tlv_builder_t b;
+    tlv_builder_init(&b);
+    int rc = -1;
+    if (tlv_put_u64(&b, TAG_POLL_ID, id) == 0 && tlv_put_u32(&b, TAG_VOTE, choice) == 0)
+        rc = client_send_frame(cc, choice ? CMSG_POLL_VOTE : CMSG_POLL_GET, b.buf, (uint32_t)b.len);
+    tlv_builder_free(&b);
+    return rc;
+}

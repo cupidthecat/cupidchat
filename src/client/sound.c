@@ -30,6 +30,7 @@ static const struct {
     [SND_BUDDY_ONLINE] = {snd_buddy_online_data, snd_buddy_online_size},
     [SND_BUDDY_OFFLINE] = {snd_buddy_offline_data, snd_buddy_offline_size},
     [SND_PROFILE_SAVED] = {snd_profile_saved_data, snd_profile_saved_size},
+    [SND_NOTICE] = {snd_notice_data, snd_notice_size},
 };
 
 static char players[3][PATH_MAX];

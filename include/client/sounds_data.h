@@ -55,3 +55,7 @@ extern const uint8_t snd_buddy_offline_data[];
 /* profile_saved — 7982 bytes */
 extern const uint8_t snd_profile_saved_data[];
 #define snd_profile_saved_size 7982U
+
+/* notice — 10188 bytes */
+extern const uint8_t snd_notice_data[];
+#define snd_notice_size 10188U

@@ -41,6 +41,8 @@ int client_send_list_rooms(client_conn_t *cc);
 int client_send_delete_room(client_conn_t *cc, const char *room);
 int client_send_list_users(client_conn_t *cc, const char *room);
 int client_send_pong(client_conn_t *cc);
+int client_send_admin(client_conn_t *cc, const char *action, const char *account, const char *body);
+int client_send_poll(client_conn_t *cc, uint64_t id, uint32_t choice);
 int client_get_profile(client_conn_t *cc, uint32_t request, uint32_t uid, const char *account,
                        const char *nick);
 int client_save_profile(client_conn_t *cc, uint32_t request, const profile_fields_t *fields);

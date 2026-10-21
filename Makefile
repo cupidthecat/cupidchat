@@ -59,7 +59,7 @@ SOUNDS_GEN_H := include/client/sounds_data.h
 SOUNDS_WAVS  := sounds/Welcome.wav sounds/Goodbye.wav \
                 sounds/IM.wav sounds/BuddyIn.wav sounds/BuddyOut.wav \
                 sounds/Mention.wav sounds/Error.wav sounds/Topic.wav \
-                sounds/BuddyOnline.wav sounds/BuddyOffline.wav sounds/ProfileSaved.wav
+                sounds/BuddyOnline.wav sounds/BuddyOffline.wav sounds/ProfileSaved.wav sounds/Notice.wav
 
 $(SOUNDS_GEN_C) $(SOUNDS_GEN_H) &: $(SOUNDS_WAVS) scripts/gen_sounds.py
 	@echo "  GEN  sounds_data"
@@ -93,9 +93,11 @@ SERVER_SRC := \
     $(SRVDIR)/core/backpressure.c \
     $(SRVDIR)/core/buddies.c \
     $(SRVDIR)/core/profiles.c \
+    $(SRVDIR)/core/admin.c \
     $(SRVDIR)/util/log.c      \
     $(SRVDIR)/util/config.c   \
-    $(SRVDIR)/db/db.c
+    $(SRVDIR)/db/db.c \
+    $(SRVDIR)/db/admin.c
 
 SERVER_OBJ := $(patsubst src/%.c, $(BUILDDIR)/%.o, $(SERVER_SRC))
 SERVER_BIN := cupid-chatd
@@ -113,6 +115,7 @@ CLIENT_SRC := \
     $(CLIDIR)/ui/forms.c           \
     $(CLIDIR)/ui/auth.c            \
     $(CLIDIR)/ui/profiles.c        \
+    $(CLIDIR)/ui/polls.c           \
     $(CLIDIR)/sound.c        \
     $(SOUNDS_GEN_C)
 
@@ -174,7 +177,7 @@ $(BUILDDIR)/tests/client/test_ui: $(TESTDIR)/client/test_ui.c \
     $(BUILDDIR)/client/state/model.o $(BUILDDIR)/client/state/history.o \
     $(BUILDDIR)/client/state/text.o \
     $(BUILDDIR)/client/ui/layout.o $(BUILDDIR)/client/ui/input.o \
-    $(BUILDDIR)/client/ui/render.o $(BUILDDIR)/client/ui/forms.o $(BUILDDIR)/client/ui/auth.o $(BUILDDIR)/client/ui/profiles.o \
+    $(BUILDDIR)/client/ui/render.o $(BUILDDIR)/client/ui/forms.o $(BUILDDIR)/client/ui/auth.o $(BUILDDIR)/client/ui/profiles.o $(BUILDDIR)/client/ui/polls.o \
     $(BUILDDIR)/shared/proto/profile.o $(BUILDDIR)/shared/proto/tlv.o
 	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncursesw
 

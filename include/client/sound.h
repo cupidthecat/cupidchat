@@ -14,6 +14,7 @@ typedef enum {
     SND_BUDDY_ONLINE,
     SND_BUDDY_OFFLINE,
     SND_PROFILE_SAVED,
+    SND_NOTICE,
     SND_COUNT
 } sound_id_t;
 

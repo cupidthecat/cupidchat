@@ -81,6 +81,27 @@ The upgrade preserves rooms, messages, topics, accounts, and buddy lists.
 Unfinished sign-ins close after five minutes. Verbose frame logs omit login
 and registration payloads.
 
+### First admins
+
+After the upgraded service has initialized its database, stop it and make a
+SQLite backup. Grant access only to account names you have verified:
+
+```bash
+sudo systemctl stop cupidchat
+sudo python3 scripts/grant-admin.py /var/lib/cupidchat/cupidchat.db verified_account another_verified_account
+sudo systemctl start cupidchat
+```
+
+The helper requires an existing database and existing accounts. All names are
+checked before any role is changed. It preserves mute and ban settings and
+records the grants. Sign in again to load the admin badge. Admins can use
+`/admin grant` and `/admin revoke` for later changes; the last admin is protected.
+
+The schema adds `account_controls`, `server_settings`, `admin_actions`, `polls`,
+`poll_options`, and `poll_votes`. Include them in database backups. Bans, mutes,
+roles, MOTD, banners, poll options, and votes survive restarts. Individual vote
+choices remain visible to server operators through the database.
+
 ### Ownership migration
 
 Back up the database with SQLite's backup API before upgrading. The schema adds

@@ -22,7 +22,7 @@ const char *profile_field_const(const profile_fields_t *fields, int index) {
 
 /* Profiles contain single-line UTF-8 fields. Reject truncation and controls
  * before persisting them or displaying a response from a remote server. */
-static bool valid_text(const uint8_t *text, size_t length) {
+bool proto_text_valid(const uint8_t *text, size_t length) {
     for (size_t i = 0; i < length;) {
         uint32_t cp = text[i++];
         if (cp < 0x80) {
@@ -65,7 +65,7 @@ int profile_fields_read(const uint8_t *payload, uint32_t length, profile_fields_
     for (int i = 0; i < PROFILE_FIELD_COUNT; i++) {
         uint16_t size;
         const uint8_t *value = tlv_find(payload, length, PROFILE_FIELDS[i].tag, &size);
-        if (!value || size >= PROFILE_FIELDS[i].capacity || !valid_text(value, size))
+        if (!value || size >= PROFILE_FIELDS[i].capacity || !proto_text_valid(value, size))
             return -1;
         memcpy(profile_field(fields, i), value, size);
     }
