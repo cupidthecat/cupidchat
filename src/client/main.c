@@ -857,6 +857,9 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
     } else if (strcmp(cmd, "help") == 0) {
         ui->show_help_modal = true;
         ui->dirty = true;
+    } else if (strcmp(cmd, "emoji") == 0) {
+        ui->show_emoji_modal = true;
+        ui->dirty = true;
     } else if (strncmp(cmd, "send", 4) == 0) {
         model_set_status(m, "File transfer not yet supported", 4);
     } else {

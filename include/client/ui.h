@@ -23,7 +23,8 @@ enum {
 typedef struct {
     ui_layout_t layout;
     void *win_topbar, *win_topic, *win_rooms, *win_chat, *win_users, *win_input;
-    bool show_users, dirty, show_help_modal, confirm_quit;
+    bool show_users, dirty, show_help_modal, show_emoji_modal, confirm_quit;
+    int emoji_cursor;
     char input_buf[4096];
     int input_len, input_cursor, input_offset, nav_cursor;
     int sidebar_offset, help_offset, scroll_delta;

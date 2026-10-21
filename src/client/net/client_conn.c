@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #include "client/client_conn.h"
+#include "client/text.h"
 #include "net/transport.h"
 #include "proto/frame.h"
 #include "proto/tlv.h"
@@ -254,10 +255,13 @@ int client_send_leave(client_conn_t *cc, const char *room) {
 }
 
 int client_send_room_msg(client_conn_t *cc, const char *room, const char *text) {
+    char expanded[MAX_MSG_LEN + 1];
+    if (text_expand_emoji(text, expanded, sizeof(expanded)) < 0)
+        return -1;
     tlv_builder_t b;
     tlv_builder_init(&b);
     tlv_put_str(&b, TAG_ROOM, room);
-    tlv_put_str(&b, TAG_TEXT, text);
+    tlv_put_str(&b, TAG_TEXT, expanded);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     int r = client_send_frame(cc, CMSG_ROOM_MSG, p, plen);
@@ -269,12 +273,14 @@ int client_send_room_msg(client_conn_t *cc, const char *room, const char *text) 
  * The text is wrapped in \x01ACTION ...\x01 before sending so the server
  * stores it verbatim and echoes it back to all members including history. */
 int client_send_room_action(client_conn_t *cc, const char *room, const char *text) {
-    char wrapped[MAX_MSG_LEN + 12];
-    snprintf(wrapped, sizeof(wrapped),
-             "\x01"
-             "ACTION %s"
-             "\x01",
-             text);
+    char wrapped[MAX_MSG_LEN + 1];
+    int length = snprintf(wrapped, sizeof(wrapped),
+                          "\x01"
+                          "ACTION %s"
+                          "\x01",
+                          text);
+    if (length < 0 || length >= (int)sizeof(wrapped))
+        return -1;
     return client_send_room_msg(cc, room, wrapped);
 }
 
@@ -291,10 +297,13 @@ int client_send_set_topic(client_conn_t *cc, const char *room, const char *topic
 }
 
 int client_send_dm(client_conn_t *cc, const char *target_nick, const char *text) {
+    char expanded[MAX_MSG_LEN + 1];
+    if (text_expand_emoji(text, expanded, sizeof(expanded)) < 0)
+        return -1;
     tlv_builder_t b;
     tlv_builder_init(&b);
     tlv_put_str(&b, TAG_NICK, target_nick);
-    tlv_put_str(&b, TAG_TEXT, text);
+    tlv_put_str(&b, TAG_TEXT, expanded);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     int r = client_send_frame(cc, CMSG_DM, p, plen);

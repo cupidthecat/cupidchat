@@ -9,6 +9,7 @@
 
 #include "client/history.h"
 #include "client/model.h"
+#include "client/text.h"
 #include "client/ui.h"
 
 #define CP_TOPBAR 1
@@ -43,6 +44,12 @@ static WINDOW *W(const ui_state_t *ui, void *win) {
     return (WINDOW *)win;
 }
 
+static void draw_text(WINDOW *w, int row, int column, const char *text, int columns) {
+    char line[CLI_MSG_MAX];
+    text_wrap_line(text, columns, 0, line, sizeof(line));
+    mvwaddstr(w, row, column, line);
+}
+
 /* Topic bar */
 
 void ui_redraw_topic(ui_state_t *ui, const cli_model_t *m) {
@@ -67,7 +74,7 @@ void ui_redraw_topic(ui_state_t *ui, const cli_model_t *m) {
     } else {
         snprintf(line, sizeof(line), " CupidChat - /join <room> to start chatting");
     }
-    mvwaddnstr(w, 0, 0, line, ui->layout.cols);
+    draw_text(w, 0, 0, line, ui->layout.cols);
     wattroff(w, COLOR_PAIR(CP_TOPBAR));
     wnoutrefresh(w);
 }
@@ -110,13 +117,13 @@ void ui_redraw_topbar(ui_state_t *ui, const cli_model_t *m) {
         size_t base = strlen(line);
         snprintf(line + base, sizeof(line) - base, " | %s", m->status_msg);
     }
-    mvwaddnstr(w, 0, 0, line, ui->layout.cols);
+    draw_text(w, 0, 0, line, ui->layout.cols);
     /* overlay [away] in dim yellow if the user is away */
     if (m->is_away) {
         const char *badge_str = "[away]";
         const char *pos = strstr(line, badge_str);
         if (pos) {
-            int bx = (int)(pos - line);
+            int bx = text_width(line, 0, (int)(pos - line));
             mvwchgat(w, 0, bx, (int)strlen(badge_str), A_DIM | A_BOLD, CP_AWAY, NULL);
         }
     }
@@ -224,16 +231,7 @@ static void render_message_row(WINDOW *w, int row, int width, const cli_msg_t *m
                  msg->nick, msg->type == MSG_ACTION ? " " : ": ");
     int indent = history_prefix_width(msg, width);
     int text_width = width - indent;
-    int offset = line * text_width;
-    int remaining = (int)strlen(msg->text) - offset;
-    int count = remaining < text_width ? remaining : text_width;
-    if (count < 0)
-        count = 0;
-    memcpy(text, msg->text + offset, (size_t)count);
-    text[count] = '\0';
-    for (int i = 0; i < count; i++)
-        if ((unsigned char)text[i] < 32 || text[i] == 127)
-            text[i] = ' ';
+    text_wrap_line(msg->text, text_width, line, text, sizeof(text));
     if (!line && !grouped) {
         int color = system ? CP_SYSTEM : nick_color(msg->nick, my_nick);
         wattron(w, COLOR_PAIR(color) | (system ? A_DIM : A_BOLD));
@@ -244,7 +242,7 @@ static void render_message_row(WINDOW *w, int row, int width, const cli_msg_t *m
         wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
     if (msg->is_highlight)
         wattron(w, A_BOLD | A_REVERSE);
-    mvwaddnstr(w, row, indent, text, count);
+    mvwaddstr(w, row, indent, text);
     wattroff(w, A_DIM | A_BOLD | A_REVERSE | COLOR_PAIR(CP_SYSTEM));
 }
 
@@ -374,12 +372,16 @@ void ui_redraw_input(ui_state_t *ui) {
     int visible = ui->layout.cols - 3;
     if (ui->input_cursor < ui->input_offset)
         ui->input_offset = ui->input_cursor;
-    if (ui->input_cursor >= ui->input_offset + visible)
-        ui->input_offset = ui->input_cursor - visible + 1;
     if (ui->input_offset > ui->input_len)
         ui->input_offset = ui->input_len;
-    waddnstr(w, ui->input_buf + ui->input_offset, visible);
-    wmove(w, 0, 2 + ui->input_cursor - ui->input_offset);
+    while (text_width(ui->input_buf, ui->input_offset, ui->input_cursor) >= visible)
+        ui->input_offset = text_next(ui->input_buf, ui->input_offset);
+    /* History recall can replace the draft while retaining an old byte offset. */
+    while (((unsigned char)ui->input_buf[ui->input_offset] & 0xc0) == 0x80)
+        ui->input_offset--;
+    int end = text_cell_offset(ui->input_buf, ui->input_offset, visible);
+    waddnstr(w, ui->input_buf + ui->input_offset, end - ui->input_offset);
+    wmove(w, 0, 2 + text_width(ui->input_buf, ui->input_offset, ui->input_cursor));
     wnoutrefresh(w);
 }
 
@@ -411,6 +413,7 @@ static const char *HELP_LINES[] = {"  ACCOUNT",
                                    "  /users [room]             Refresh user list",
                                    "  /help                     Show this help",
                                    "  /sound on|off|test|status  Notification audio controls",
+                                   "  /emoji or F2              Insert an emoji",
                                    "  /quit                     Exit CupidChat",
                                    "",
                                    "  F1 help, F3/Ctrl+W close chat, F4 latest",
@@ -475,6 +478,32 @@ static void ui_redraw_help_modal(ui_state_t *ui) {
     delwin(w);
 }
 
+static void ui_redraw_emoji_modal(ui_state_t *ui) {
+    int width = 36;
+    int height = ui->layout.rows - 2;
+    if (height > EMOJI_COUNT + 4)
+        height = EMOJI_COUNT + 4;
+    int visible = height - 4;
+    int first = ui->emoji_cursor / visible * visible;
+    WINDOW *w =
+        newwin(height, width, (ui->layout.rows - height) / 2, (ui->layout.cols - width) / 2);
+    if (!w)
+        return;
+    box(w, 0, 0);
+    mvwaddstr(w, 0, 2, " Emoji ");
+    for (int i = first; i < EMOJI_COUNT && i < first + visible; i++) {
+        if (i == ui->emoji_cursor)
+            wattron(w, A_REVERSE);
+        char label[64];
+        snprintf(label, sizeof(label), "%s  :%s:", EMOJIS[i].glyph, EMOJIS[i].name);
+        draw_text(w, i - first + 1, 2, label, width - 4);
+        wattroff(w, A_REVERSE);
+    }
+    mvwaddstr(w, height - 2, 2, "Arrows choose; Enter adds; Esc");
+    wnoutrefresh(w);
+    delwin(w);
+}
+
 /* Full redraw */
 
 void ui_redraw(ui_state_t *ui, cli_model_t *m) {
@@ -487,7 +516,7 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui->dirty = false;
         return;
     }
-    mvaddnstr(ui->layout.rows - 2, 0, "[Close] [Help] [Latest] [Quit]", ui->layout.cols);
+    mvaddnstr(ui->layout.rows - 2, 0, "[Close] [Help] [Latest] [Quit] [Emoji]", ui->layout.cols);
     wnoutrefresh(stdscr);
     ui_redraw_topbar(ui, m);
     ui_redraw_topic(ui, m);
@@ -497,6 +526,8 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
     ui_redraw_input(ui);
     if (ui->show_help_modal)
         ui_redraw_help_modal(ui);
+    if (ui->show_emoji_modal)
+        ui_redraw_emoji_modal(ui);
     if (ui->confirm_quit) {
         int width = ui->layout.cols < 48 ? ui->layout.cols - 2 : 46;
         WINDOW *dialog = newwin(5, width, (ui->layout.rows - 5) / 2, (ui->layout.cols - width) / 2);
