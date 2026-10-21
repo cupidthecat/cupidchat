@@ -61,6 +61,9 @@ int server_profile_command(server_state_t *s, conn_t *c, const frame_t *f) {
     if (rc != 1)
         return profile_error(s, c, request, ERR_UNKNOWN,
                              rc == 0 ? "No such account" : "Could not load profile");
+    account_controls_t controls;
+    if (db_get_controls(s->db, found, &controls) < 0)
+        return profile_error(s, c, request, ERR_UNKNOWN, "Could not load account permissions");
     conn_t *peer = server_find_by_account(s, found);
     info.is_self = found == c->account_id;
     tlv_builder_t b;
@@ -74,6 +77,7 @@ int server_profile_command(server_state_t *s, conn_t *c, const frame_t *f) {
                   tlv_put_str(&b, TAG_AWAY_MSG, peer && peer->is_away ? peer->away_msg : "") < 0 ||
                   tlv_put_u64(&b, TAG_MEMBER_SINCE, info.member_since) < 0 ||
                   tlv_put_u8(&b, TAG_IS_ACCOUNT, 1) < 0 ||
+                  tlv_put_u8(&b, TAG_IS_ADMIN, controls.admin) < 0 ||
                   tlv_put_u8(&b, TAG_IS_SELF, info.is_self) < 0;
     rc = failed ? -1
                 : conn_send_frame(c, save ? SMSG_PROFILE_SAVED : SMSG_PROFILE,

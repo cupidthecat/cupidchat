@@ -16,6 +16,7 @@ typedef struct {
 extern const profile_field_spec_t PROFILE_FIELDS[PROFILE_FIELD_COUNT];
 char *profile_field(profile_fields_t *fields, int index);
 const char *profile_field_const(const profile_fields_t *fields, int index);
+bool proto_text_valid(const uint8_t *text, size_t length);
 int profile_fields_read(const uint8_t *payload, uint32_t length, profile_fields_t *fields);
 int profile_fields_write(tlv_builder_t *builder, const profile_fields_t *fields);
 
@@ -25,5 +26,5 @@ typedef struct {
     uint32_t user_id;
     uint64_t member_since;
     uint8_t presence;
-    bool is_account, is_self;
+    bool is_account, is_self, is_admin;
 } profile_info_t;

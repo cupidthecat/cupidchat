@@ -59,7 +59,9 @@ void ui_redraw_topic(ui_state_t *ui, const cli_model_t *m) {
     werase(w);
     wattron(w, COLOR_PAIR(CP_TOPBAR)); /* same cyan palette, but no bold */
     char line[512] = {0};
-    if (m->active_room >= 0 && m->active_room < m->room_count) {
+    if (m->banner[0]) {
+        snprintf(line, sizeof(line), " [SERVER] %.500s", m->banner);
+    } else if (m->active_room >= 0 && m->active_room < m->room_count) {
         const cli_room_t *r = &m->rooms[m->active_room];
         if (r->topic[0]) {
             if (r->topic_set_by[0])
@@ -109,8 +111,9 @@ void ui_redraw_topbar(ui_state_t *ui, const cli_model_t *m) {
         size_t nd_len = strlen(nick_display);
         snprintf(nick_display + nd_len, sizeof(nick_display) - nd_len, " [away]");
     }
-    snprintf(line, sizeof(line), " %s %s | %s | %s ", status,
-             m->server_name[0] ? m->server_name : "cupidchat", nick_display, chat);
+    snprintf(line, sizeof(line), " %s %s%s | %s | %s ", status,
+             m->server_name[0] ? m->server_name : "cupidchat", m->is_admin ? " [admin]" : "",
+             nick_display, chat);
 
     /* status message */
     if (m->status_msg[0] && time(NULL) < m->status_msg_until) {
@@ -425,6 +428,9 @@ void ui_redraw_input(ui_state_t *ui) {
 static const char *HELP_LINES[] = {"  ACCOUNT",
                                    "  F7 /profile [nick/@account]  View or edit profile",
                                    "  Click users or buddies to view their profile",
+                                   "  F8 /poll; /vote <1-4>     Server polls",
+                                   "  /motd /banner             Read server messages",
+                                   "  /admin help               Admin command reference",
                                    "  /register <nick> <pass>   Create account & log in",
                                    "  /login    <nick> <pass>   Log in to existing account",
                                    "  /logout                   Return to sign-in screen",
@@ -630,6 +636,8 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui_redraw_buddies_modal(ui, m);
     if (ui->show_profile)
         ui_redraw_profile(ui, m);
+    if (ui->show_poll)
+        ui_redraw_poll(ui, m);
     if (ui->confirm_quit) {
         int width = ui->layout.cols < 48 ? ui->layout.cols - 2 : 46;
         WINDOW *dialog = newwin(5, width, (ui->layout.rows - 5) / 2, (ui->layout.cols - width) / 2);

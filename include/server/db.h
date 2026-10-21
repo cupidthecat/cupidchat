@@ -1,5 +1,6 @@
 /* CupidChat public interface. */
 #pragma once
+#include "proto/admin.h"
 #include "proto/profile.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -33,3 +34,14 @@ uint64_t db_find_account(cupid_db_t *db, const char *name);
 int db_get_profile(cupid_db_t *db, uint64_t account, const char *name, profile_info_t *info,
                    uint64_t *found_account);
 int db_set_profile(cupid_db_t *db, uint64_t account, const profile_fields_t *fields);
+
+int db_init_admin(cupid_db_t *db);
+int db_get_controls(cupid_db_t *db, uint64_t account, account_controls_t *flags);
+int db_control_account(cupid_db_t *db, uint64_t actor, uint64_t target, const char *action,
+                       const char *reason);
+int db_get_setting(cupid_db_t *db, const char *key, char *value, size_t capacity);
+int db_set_setting(cupid_db_t *db, const char *key, const char *value);
+int db_get_poll(cupid_db_t *db, uint64_t id, uint64_t account, poll_info_t *poll);
+int db_create_poll(cupid_db_t *db, uint64_t actor, const poll_info_t *poll);
+int db_vote_poll(cupid_db_t *db, uint64_t id, uint64_t account, uint32_t choice);
+int db_close_poll(cupid_db_t *db);

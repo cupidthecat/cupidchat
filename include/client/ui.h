@@ -26,6 +26,8 @@ enum {
     UI_PROFILE_MESSAGE,
     UI_PROFILE_BUDDY,
     UI_PROFILE_REFRESH,
+    UI_POLL_OPEN,
+    UI_POLL_VOTE,
     UI_QUIT
 };
 
@@ -33,6 +35,9 @@ typedef struct {
     ui_layout_t layout;
     void *win_topbar, *win_topic, *win_rooms, *win_chat, *win_users, *win_input;
     bool show_users, dirty, show_help_modal, show_emoji_modal, show_buddies_modal, confirm_quit;
+    bool show_poll, poll_pending;
+    int poll_cursor, poll_question_row;
+    bool poll_requested;
     int buddy_cursor;
     int emoji_cursor;
     bool show_auth, auth_register, auth_pending;
@@ -83,3 +88,6 @@ int ui_profile_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t cha
                      bool printable);
 void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m);
 int ui_profile_target(ui_state_t *ui, uint32_t uid, const char *nick, const char *account);
+
+int ui_poll_input(ui_state_t *ui, const cli_model_t *m, int key);
+void ui_redraw_poll(ui_state_t *ui, const cli_model_t *m);

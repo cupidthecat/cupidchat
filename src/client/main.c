@@ -237,6 +237,15 @@ static void open_profile(cli_model_t *m, client_conn_t *cc, ui_state_t *ui, bool
     }
 }
 
+static void server_text(cli_model_t *m, const char *text) {
+    const char *room = m->active_room >= 0 ? m->rooms[m->active_room].name : "general";
+    char copy[2048];
+    snprintf(copy, sizeof(copy), "%s", text);
+    char *save = NULL;
+    for (char *line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save))
+        model_push_system_msg(m, room, line, (uint64_t)time(NULL) * 1000, MSG_SYSTEM);
+}
+
 static void enter_chat(frame_ctx_t *ctx) {
     cli_model_t *m = ctx->model;
     client_conn_t *cc = ctx->conn;
@@ -273,6 +282,8 @@ static void enter_chat(frame_ctx_t *ctx) {
     client_send_list_users(cc, "general");
     ctx->ui->nav_cursor = (m->active_room >= 0) ? m->active_room : 0;
     model_set_status(m, "Connected", 8);
+    if (m->server_caps & CAP_POLLS)
+        client_send_poll(cc, 0, 0);
 }
 
 static void on_frame(const frame_t *f, void *ctx_ptr) {
@@ -289,6 +300,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_u32(p, pl, TAG_SESSION_ID, &sid);
             tlv_read_str(p, pl, TAG_SERVER_NAME, m->server_name, sizeof(m->server_name));
             tlv_read_str(p, pl, TAG_MOTD, m->motd, sizeof(m->motd));
+            tlv_read_str(p, pl, TAG_BANNER, m->banner, sizeof(m->banner));
             m->session_id = sid;
             tlv_read_u32(p, pl, TAG_CAPS, &m->server_caps);
             m->user_id = sid; /* our own UID for self-message detection */
@@ -318,8 +330,102 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 ui_auth_clear_secrets(ctx->ui);
                 ctx->ui->auth_focus = 1;
             }
+            ctx->ui->poll_pending = ctx->ui->poll_requested = false;
             model_set_status(m, msg, 5);
             sound_play(SND_ERROR);
+            ctx->ui->dirty = true;
+            break;
+        }
+
+        case SMSG_ACCOUNT_FLAGS: {
+            uint8_t admin = 0, muted = 0;
+            tlv_read_u8(p, pl, TAG_IS_ADMIN, &admin);
+            tlv_read_u8(p, pl, TAG_MUTED, &muted);
+            m->is_admin = admin != 0;
+            m->is_muted = muted != 0;
+            if (m->is_muted)
+                model_set_status(m, "Your account is muted", 999);
+            ctx->ui->dirty = true;
+            break;
+        }
+
+        case SMSG_SERVER_NOTICE: {
+            char scope[33] = {0}, text[2048] = {0}, actor[33] = {0};
+            tlv_read_str(p, pl, TAG_SCOPE, scope, sizeof(scope));
+            tlv_read_str(p, pl, TAG_TEXT, text, sizeof(text));
+            tlv_read_str(p, pl, TAG_NICK, actor, sizeof(actor));
+            char message[2200];
+            if (!strcmp(scope, "banner")) {
+                snprintf(m->banner, sizeof(m->banner), "%.512s", text);
+                snprintf(message, sizeof(message), "[Server banner / %s] %s", actor,
+                         text[0] ? text : "cleared");
+                sound_play(SND_NOTICE);
+            } else if (!strcmp(scope, "motd")) {
+                snprintf(m->motd, sizeof(m->motd), "%s", text);
+                snprintf(message, sizeof(message),
+                         "[Server / %s] MOTD updated. Use /motd to read it.", actor);
+                sound_play(SND_NOTICE);
+            } else
+                snprintf(message, sizeof(message), "[Admin / %s] %s", actor, text);
+            server_text(m, message);
+            model_set_status(m, message, 10);
+            ctx->ui->dirty = true;
+            break;
+        }
+
+        case SMSG_POLL: {
+            poll_info_t poll = {0};
+            tlv_read_u64(p, pl, TAG_POLL_ID, &poll.id);
+            tlv_read_str(p, pl, TAG_TEXT, poll.question, sizeof(poll.question));
+            uint8_t closed = 0;
+            tlv_read_u8(p, pl, TAG_CLOSED, &closed);
+            poll.closed = closed != 0;
+            bool personal = tlv_read_u32(p, pl, TAG_VOTE, &poll.my_vote);
+            if (!personal && poll.id == m->poll.id)
+                poll.my_vote = m->poll.my_vote;
+            tlv_reader_t reader;
+            tlv_field_t field;
+            tlv_reader_init(&reader, p, pl);
+            bool valid = true;
+            while (tlv_reader_next(&reader, &field)) {
+                if (field.tag == TAG_OPTION) {
+                    if (poll.option_count == POLL_OPTIONS_MAX || !field.len ||
+                        field.len >= sizeof(poll.options[0]) ||
+                        !proto_text_valid(field.val, field.len)) {
+                        valid = false;
+                        break;
+                    }
+                    memcpy(poll.options[poll.option_count++], field.val, field.len);
+                } else if (field.tag == TAG_VOTES && poll.option_count && field.len == 4) {
+                    uint32_t count;
+                    memcpy(&count, field.val, 4);
+                    poll.votes[poll.option_count - 1] = ntohl(count);
+                }
+            }
+            if (!valid || (poll.id && poll.option_count < 2))
+                break;
+            m->poll = poll;
+            if (personal && ctx->ui->poll_requested) {
+                ctx->ui->poll_requested = false;
+                if (poll.id) {
+                    server_text(m, poll.question);
+                    for (int i = 0; i < poll.option_count; i++) {
+                        char option[160];
+                        snprintf(option, sizeof(option), "%d. [%u votes] %s", i + 1, poll.votes[i],
+                                 poll.options[i]);
+                        server_text(m, option);
+                    }
+                }
+            }
+            if (personal)
+                ctx->ui->poll_pending = false;
+            char scope[16] = {0};
+            tlv_read_str(p, pl, TAG_SCOPE, scope, sizeof(scope));
+            if (!strcmp(scope, "new")) {
+                server_text(m, "[Server] A new poll is open. F8 or /poll to vote.");
+                model_set_status(m, "New server poll: F8 to vote", 10);
+                sound_play(SND_NOTICE);
+            }
             ctx->ui->dirty = true;
             break;
         }
@@ -347,6 +453,9 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             uint8_t self = 0;
             tlv_read_u8(p, pl, TAG_IS_SELF, &self);
             info.is_self = self != 0;
+            uint8_t admin = 0;
+            tlv_read_u8(p, pl, TAG_IS_ADMIN, &admin);
+            info.is_admin = admin != 0;
             info.is_account = true;
             ui->profile = info;
             ui->profile_loading = ui->profile_saving = ui->profile_editing = false;
@@ -739,7 +848,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
 
         case SMSG_LOGOUT_OK: {
             uint32_t uid = 0, caps = m->server_caps;
-            char server[128], motd[2048];
+            char server[128], motd[2048], banner[513];
+            snprintf(banner, sizeof(banner), "%s", m->banner);
             snprintf(server, sizeof(server), "%s", m->server_name);
             snprintf(motd, sizeof(motd), "%s", m->motd);
             tlv_read_u32(p, pl, TAG_USER_ID, &uid);
@@ -750,6 +860,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             m->user_id = m->session_id = uid;
             snprintf(m->server_name, sizeof(m->server_name), "%s", server);
             snprintf(m->motd, sizeof(m->motd), "%s", motd);
+            snprintf(m->banner, sizeof(m->banner), "%s", banner);
             ui_state_t *ui = ctx->ui;
             for (int i = 0; i < ui->hist_count; i++) {
                 explicit_bzero(ui->hist[i], strlen(ui->hist[i]));
@@ -765,6 +876,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             ui->auth_pending = ui->auth_register = false;
             ui->show_profile = ui->profile_editing = ui->profile_saving = ui->profile_loading =
                 false;
+            ui->show_poll = ui->poll_pending = ui->poll_requested = false;
             ui->profile_discard = false;
             memset(&ui->profile, 0, sizeof(ui->profile));
             explicit_bzero(&ui->profile_draft, sizeof(ui->profile_draft));
@@ -871,6 +983,56 @@ static void next_unread(cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
     ui->dirty = true;
 }
 
+static void admin_command(const char *command, cli_model_t *m, client_conn_t *cc) {
+    if (!*command || !strcmp(command, "help")) {
+        server_text(m, "Admin: /admin kick|ban|unban|mute|unmute <account> [reason]");
+        server_text(m, "Roles: /admin grant|revoke <account> (the last admin is protected)");
+        server_text(m, "Messages: /admin banner <text or clear>; /admin motd <text or clear>");
+        server_text(m, "MOTD: use | between lines. /motd and /banner read the current messages.");
+        server_text(
+            m, "Polls: /admin poll Question | Choice one | Choice two [| more]; /admin pollclose");
+        return;
+    }
+    if (!m->is_admin) {
+        model_set_status(m, "This command requires a server admin", 5);
+        return;
+    }
+    char copy[2048];
+    if (strlen(command) >= sizeof(copy)) {
+        model_set_status(m, "Admin command is too long", 5);
+        return;
+    }
+    snprintf(copy, sizeof(copy), "%s", command);
+    char *body = strchr(copy, ' ');
+    if (body) {
+        *body++ = '\0';
+        while (*body == ' ')
+            body++;
+    } else
+        body = copy + strlen(copy);
+    char *account = NULL;
+    bool setting = !strcmp(copy, "banner") || !strcmp(copy, "motd") || !strcmp(copy, "poll");
+    if (!setting && strcmp(copy, "pollclose")) {
+        account = body;
+        body = strchr(account, ' ');
+        if (body) {
+            *body++ = '\0';
+            while (*body == ' ')
+                body++;
+        } else
+            body = account + strlen(account);
+        if (!*account || strlen(account) > MAX_NICK_LEN) {
+            model_set_status(m, "Usage: /admin <action> <account> [reason]", 5);
+            return;
+        }
+    } else if (setting && !*body) {
+        model_set_status(m, "Provide text, or use clear to remove a server message", 5);
+        return;
+    }
+    if (client_send_admin(cc, copy, account, body) < 0)
+        model_set_status(m, "Could not send admin command", 5);
+}
+
 static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
     /* skip leading '/' */
     const char *cmd = line + 1;
@@ -896,7 +1058,26 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
         }
     }
 
-    if (!strcmp(cmd, "profile") || !strncmp(cmd, "profile ", 8) || !strncmp(cmd, "whois ", 6)) {
+    if (!strcmp(cmd, "admin") || !strncmp(cmd, "admin ", 6)) {
+        admin_command(cmd[5] ? cmd + 6 : "", m, cc);
+    } else if (!strcmp(cmd, "poll")) {
+        if (m->server_caps & CAP_POLLS) {
+            ui->show_poll = ui->poll_requested = true;
+            ui->poll_question_row = 0;
+            client_send_poll(cc, 0, 0);
+        } else
+            model_set_status(m, "This server does not support polls", 5);
+    } else if (!strncmp(cmd, "vote ", 5)) {
+        if (strlen(cmd + 5) != 1 || cmd[5] < '1' || cmd[5] > '4' || !m->poll.id || m->poll.closed)
+            model_set_status(m, "Open /poll, then use /vote <1-4> on an open poll", 5);
+        else
+            client_send_poll(cc, m->poll.id, (uint32_t)(cmd[5] - '0'));
+    } else if (!strcmp(cmd, "motd")) {
+        server_text(m, m->motd[0] ? m->motd : "The server MOTD is empty.");
+    } else if (!strcmp(cmd, "banner")) {
+        server_text(m, m->banner[0] ? m->banner : "No server banner is set.");
+    } else if (!strcmp(cmd, "profile") || !strncmp(cmd, "profile ", 8) ||
+               !strncmp(cmd, "whois ", 6)) {
         const char *name = !strncmp(cmd, "whois ", 6) ? cmd + 6 : cmd[7] ? cmd + 8 : "";
         while (*name == ' ')
             name++;
@@ -1359,6 +1540,27 @@ int main(int argc, char **argv) {
                 g_quit = 1;
                 break;
             }
+            if (kr == UI_POLL_OPEN) {
+                if (!(model.server_caps & CAP_POLLS))
+                    model_set_status(&model, "This server does not support polls", 5);
+                else {
+                    ui.show_poll = true;
+                    ui.poll_requested = true;
+                    ui.poll_question_row = 0;
+                    ui.poll_pending = false;
+                    client_send_poll(&cc, 0, 0);
+                }
+                ui.dirty = true;
+                continue;
+            }
+            if (kr == UI_POLL_VOTE) {
+                if (model.poll.id && !model.poll.closed && !model.is_muted && !ui.poll_pending) {
+                    ui.poll_pending =
+                        client_send_poll(&cc, model.poll.id, (uint32_t)ui.poll_cursor + 1) == 0;
+                    ui.dirty = true;
+                }
+                continue;
+            }
             if (kr == UI_PROFILE_OPEN || kr == UI_PROFILE_REFRESH) {
                 open_profile(&model, &cc, &ui, kr == UI_PROFILE_REFRESH);
                 continue;
@@ -1483,8 +1685,8 @@ int main(int argc, char **argv) {
             } else if (kr == UI_NONE) {
                 /* regular keystroke -  send typing notification (throttled) */
                 time_t now = time(NULL);
-                if (model.status == CLI_ONLINE && model.active_room >= 0 && ui.input_len > 0 &&
-                    now - last_typing_sent >= 2) {
+                if (model.status == CLI_ONLINE && !model.is_muted && model.active_room >= 0 &&
+                    ui.input_len > 0 && now - last_typing_sent >= 2) {
                     const char *room = model.rooms[model.active_room].name;
                     client_send_typing(&cc, room);
                     last_typing_sent = now;

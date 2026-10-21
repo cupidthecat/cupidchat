@@ -1,5 +1,6 @@
 /* CupidChat public interface. */
 #pragma once
+#include "proto/admin.h"
 #include "proto/profile.h"
 #include "proto/types.h"
 #include <stdbool.h>
@@ -59,7 +60,9 @@ typedef struct {
     cli_status_t status;
     uint32_t session_id, user_id;
     uint32_t server_caps;
-    bool logged_in;
+    bool logged_in, is_admin, is_muted;
+    char banner[513];
+    poll_info_t poll;
     cli_buddy_t buddies[MAX_BUDDIES];
     int buddy_count;
     char nick[CLI_NICK_MAX], base_nick[CLI_NICK_MAX], server_name[128], motd[2048];

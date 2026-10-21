@@ -14,6 +14,7 @@
 #include "proto/frame.h"
 #include "proto/tlv.h"
 #include "proto/types.h"
+#include "server/admin.h"
 #include "server/buddies.h"
 #include "server/conn.h"
 #include "server/db.h"
@@ -103,16 +104,22 @@ static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
     tlv_put_u16(&b, TAG_PROTO_VERSION, CUPID_PROTO_VERSION);
     tlv_put_u32(&b, TAG_SESSION_ID, c->user_id);
     tlv_put_str(&b, TAG_SERVER_NAME, CUPID_SERVER_NAME);
-    tlv_put_str(&b, TAG_MOTD,
-                "  ____            _     _  ____  _           _\n"
-                " / ___|   _ _ __ (_) __| |/ ___|| |__   __ _| |_\n"
-                "| |  | | | | '_ \\| |/ _` | |    | '_ \\ / _` | __|\n"
-                "| |__| |_| | |_) | | (_| | |___ | | | | (_| | |_\n"
-                " \\____\\__,_| .__/|_|\\__,_|\\____||_| |_|\\__,_|\\__|\n"
-                "            |_|        Welcome to CupidChat v1.0\n"
-                "\n"
-                "Type /help for a list of commands.");
-    tlv_put_u32(&b, TAG_CAPS, CAP_HISTORY | CAP_BUDDIES | CAP_PROFILES | CAP_ACCOUNT_REQUIRED);
+    const char *default_motd = "  ____            _     _  ____  _           _\n"
+                               " / ___|   _ _ __ (_) __| |/ ___|| |__   __ _| |_\n"
+                               "| |  | | | | '_ \\| |/ _` | |    | '_ \\ / _` | __|\n"
+                               "| |__| |_| | |_) | | (_| | |___ | | | | (_| | |_\n"
+                               " \\____\\__,_| .__/|_|\\__,_|\\____||_| |_|\\__,_|\\__|\n"
+                               "            |_|        Welcome to CupidChat v1.0\n"
+                               "\n"
+                               "Type /help for a list of commands.";
+    char motd[2048], banner[513];
+    int custom_motd = db_get_setting(s->db, "motd", motd, sizeof(motd));
+    db_get_setting(s->db, "banner", banner, sizeof(banner));
+    tlv_put_str(&b, TAG_MOTD, custom_motd == 1 ? motd : default_motd);
+    tlv_put_str(&b, TAG_BANNER, banner);
+    tlv_put_u32(&b, TAG_CAPS,
+                CAP_HISTORY | CAP_BUDDIES | CAP_PROFILES | CAP_ACCOUNT_REQUIRED | CAP_ADMIN |
+                    CAP_POLLS);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     conn_send_frame(c, SMSG_WELCOME, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), p, plen, s->cfg);
@@ -542,8 +549,10 @@ static int server_do_rename(conn_t *c, const char *new_nick, server_msg_t confir
 
     LOG_INFO("fd=%d uid=%u rename: %s -> %s", c->fd, c->user_id, old_nick, new_nick);
     if (c->account_id) {
-        if (confirm_type == SMSG_REGISTER_OK || confirm_type == SMSG_LOGIN_OK)
+        if (confirm_type == SMSG_REGISTER_OK || confirm_type == SMSG_LOGIN_OK) {
+            server_account_flags(s, c);
             server_send_buddies(s, c);
+        }
         server_buddy_presence(s, c->account_id, false);
     }
     return 0;
@@ -645,6 +654,11 @@ static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
     if (db_account_name(s->db, account_id, nick, sizeof(nick)) < 0)
         return send_error(c, ERR_UNKNOWN, "could not load account", s);
 
+    account_controls_t flags;
+    if (db_get_controls(s->db, account_id, &flags) < 0)
+        return send_error(c, ERR_UNKNOWN, "Could not load account permissions", s);
+    if (flags.banned)
+        return send_error(c, ERR_PERMISSION_DENIED, "This account is banned from this server", s);
     conn_t *signed_in = server_find_by_account(s, account_id);
     if (signed_in && signed_in != c)
         return send_error(c, ERR_NICK_TAKEN, "account already logged in elsewhere", s);
@@ -849,6 +863,11 @@ int dispatch_frame(conn_t *c, const frame_t *f, server_state_t *s) {
         f->hdr.type != CMSG_PING && f->hdr.type != CMSG_PONG)
         return send_error(c, ERR_AUTH_REQUIRED, "Create an account or log in before chatting", s);
 
+    if (c->state == CONN_AUTHED &&
+        (f->hdr.type == CMSG_ROOM_MSG || f->hdr.type == CMSG_DM || f->hdr.type == CMSG_SET_TOPIC ||
+         f->hdr.type == CMSG_TYPING) &&
+        !server_chat_allowed(s, c))
+        return 0;
     switch ((client_msg_t)f->hdr.type) {
         case CMSG_HELLO:
             return handle_hello(c, f, s);
@@ -891,6 +910,11 @@ int dispatch_frame(conn_t *c, const frame_t *f, server_state_t *s) {
         case CMSG_PROFILE_GET:
         case CMSG_PROFILE_SET:
             return server_profile_command(s, c, f);
+        case CMSG_ADMIN:
+            return server_admin_command(s, c, f);
+        case CMSG_POLL_GET:
+        case CMSG_POLL_VOTE:
+            return server_poll_command(s, c, f);
         /* file transfer: not yet implemented */
         case CMSG_FILE_OFFER:
         case CMSG_FILE_ACCEPT:

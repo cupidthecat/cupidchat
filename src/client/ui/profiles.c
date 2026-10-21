@@ -233,7 +233,8 @@ void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
         int count = 0;
         snprintf(lines[count++], 768, "%s",
                  p->fields.display_name[0] ? p->fields.display_name : p->account);
-        snprintf(lines[count++], 768, "Account: %s | %s%s%s", p->account,
+        snprintf(lines[count++], 768, "Account: %s%s | %s%s%s", p->account,
+                 p->is_admin ? " [admin]" : "",
                  !p->presence       ? "offline"
                  : p->presence == 2 ? "away"
                                     : "online",

@@ -7,6 +7,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 **Server**
 
 - `epoll`-based event loop with `timerfd` keepalive
+- Persistent account moderation, admin roles, editable MOTD and banners, and server polls
 - Required account sign-in; guest connections cannot access chat
 - SQLite WAL persistence (rooms, users, profiles, buddies, per-room history, topics)
 - Token-bucket rate limiting per connection
@@ -249,6 +250,7 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | `F5` | Jump to the next unread chat |
 | `F6` | Open or refresh buddies; Enter opens a DM, P opens the selected profile |
 | `F7` | Open your profile |
+| `F8` | Open the latest server poll |
 | `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
 | `Ctrl+L` | Redraw the terminal |
 
@@ -299,6 +301,48 @@ Messages sent from an existing DM or `/reply` include its peer's session ID.
 The server rejects a message if someone else has taken that nickname. Reopen
 the DM after a buddy reconnects. Explicit `/dm <nick> <message>` still addresses
 the current holder of that nickname.
+
+### Server messages, polls, and admins
+
+`/motd` and `/banner` show the current server messages. A banner stays in the
+topic bar until an admin clears it. MOTD updates reach connected users and are
+shown to new sign-ins. Banners, MOTD changes, and new polls play a short notice
+tone; `/sound off` mutes it with the other notifications.
+
+F8 or `/poll` opens the latest server poll. Arrows or 1-4 select a choice;
+Enter or Vote submits it. R refreshes, PgUp/PgDn reads wrapped question lines,
+and Esc or Close returns to chat. Opening or refreshing a poll also puts its
+full question and choices in scrollback. `/vote <1-4>` submits a choice from
+the command line. Each account has one vote and can change it while the poll
+is open. Closed polls retain their totals. Only one poll can be open at a time.
+Votes survive reconnects and server restarts. Other clients receive counts;
+they do not receive individual voters' choices.
+
+Admins have a badge in the top bar and on their profile. `/admin help` lists
+the commands. Account names in moderation commands refer to persistent
+accounts, including users who have changed their nickname.
+
+| Command | Action |
+|---------|--------|
+| `/admin kick <account> [reason]` | Disconnect an online account; it may reconnect |
+| `/admin ban <account> [reason]` | Disconnect the account and block future logins |
+| `/admin unban <account> [reason]` | Allow the account to log in again |
+| `/admin mute <account> [reason]` | Block room messages, DMs, topics, typing, and votes |
+| `/admin unmute <account> [reason]` | Restore those actions |
+| `/admin grant <account>` | Give an existing account admin access |
+| `/admin revoke <account>` | Remove admin access; the last admin cannot be removed |
+| `/admin banner <text>` | Save and broadcast a banner, up to 512 UTF-8 bytes |
+| `/admin banner clear` | Remove the banner |
+| `/admin motd <text>` | Save the MOTD, up to 1800 UTF-8 bytes; use `|` between lines |
+| `/admin motd clear` | Empty the MOTD |
+| `/admin poll Question \| Choice one \| Choice two [\| more]` | Create a poll with 2-4 choices |
+| `/admin pollclose` | Close the current poll and retain its results |
+
+Revoke an admin's role before kicking, muting, or banning that account.
+Moderation reasons are limited to 256 UTF-8 bytes. Account bans do not prevent
+someone from registering another account. Moderation and role changes are
+recorded in the server database. Server operators can appoint the first admin
+using the [deployment instructions](deploy/README.md).
 
 ### Public profiles
 
