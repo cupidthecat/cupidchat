@@ -24,3 +24,7 @@ bool db_register_user(cupid_db_t *db, const char *username, const char *password
 bool db_authenticate_user(cupid_db_t *db, const char *username, const char *password);
 uint64_t db_register_account(cupid_db_t *db, const char *username, const char *password);
 uint64_t db_authenticate_account(cupid_db_t *db, const char *username, const char *password);
+typedef void (*db_buddy_cb)(void *, uint64_t, const char *);
+int db_list_buddies(cupid_db_t *db, uint64_t owner, db_buddy_cb cb, void *ctx);
+int db_update_buddy(cupid_db_t *db, uint64_t owner, const char *name, bool remove);
+int db_account_name(cupid_db_t *db, uint64_t account, char *name, int capacity);

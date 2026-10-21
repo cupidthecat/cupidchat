@@ -54,6 +54,8 @@ int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
             ui->confirm_quit = true;
         if (x >= 31 && x < 38)
             ui->show_emoji_modal = true;
+        if (x >= 39 && x < 48 && ui->layout.cols >= 49)
+            return UI_BUDDY_OPEN;
     } else if (y >= 3 && y < 2 + ui->layout.chat_h && x < ui->layout.rooms_w - 1) {
         int index = ui->sidebar_offset + y - 3;
         if (index < m->room_count + m->dm_count) {
@@ -196,6 +198,25 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return UI_NONE;
     }
 
+    if (ui->show_buddies_modal) {
+        if (m->buddy_count == 0)
+            ui->buddy_cursor = 0;
+        else if (ui->buddy_cursor >= m->buddy_count)
+            ui->buddy_cursor = m->buddy_count - 1;
+        if (ch == 27)
+            ui->show_buddies_modal = false;
+        else if ((ch == KEY_DOWN || ch == '\t') && m->buddy_count)
+            ui->buddy_cursor = (ui->buddy_cursor + 1) % m->buddy_count;
+        else if (ch == KEY_UP && m->buddy_count)
+            ui->buddy_cursor = (ui->buddy_cursor + m->buddy_count - 1) % m->buddy_count;
+        else if (ch == 'r' || ch == 'R')
+            return UI_BUDDY_OPEN;
+        else if ((ch == '\n' || ch == KEY_ENTER) && m->buddy_count)
+            return UI_BUDDY_SELECT;
+        ui->dirty = true;
+        return UI_NONE;
+    }
+
     /* Any key dismisses the help modal */
     if (ui->show_help_modal) {
         if (ch == KEY_DOWN || ch == KEY_NPAGE)
@@ -230,6 +251,8 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return UI_LATEST;
     if (ch == KEY_F(5))
         return UI_NEXT_UNREAD;
+    if (ch == KEY_F(6))
+        return UI_BUDDY_OPEN;
     if (ch == KEY_MOUSE) {
         MEVENT event;
         if (getmouse(&event) != OK)

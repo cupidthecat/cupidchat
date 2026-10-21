@@ -297,12 +297,18 @@ int client_send_set_topic(client_conn_t *cc, const char *room, const char *topic
 }
 
 int client_send_dm(client_conn_t *cc, const char *target_nick, const char *text) {
+    return client_send_dm_to(cc, target_nick, text, 0);
+}
+
+int client_send_dm_to(client_conn_t *cc, const char *target_nick, const char *text, uint32_t uid) {
     char expanded[MAX_MSG_LEN + 1];
     if (text_expand_emoji(text, expanded, sizeof(expanded)) < 0)
         return -1;
     tlv_builder_t b;
     tlv_builder_init(&b);
     tlv_put_str(&b, TAG_NICK, target_nick);
+    if (uid)
+        tlv_put_u32(&b, TAG_PEER_UID, uid);
     tlv_put_str(&b, TAG_TEXT, expanded);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
@@ -342,6 +348,16 @@ int client_send_list_users(client_conn_t *cc, const char *room) {
 
 int client_send_pong(client_conn_t *cc) {
     return client_send_frame(cc, CMSG_PONG, NULL, 0);
+}
+
+int client_send_buddy(client_conn_t *cc, uint16_t type, const char *account) {
+    tlv_builder_t b;
+    tlv_builder_init(&b);
+    if (account)
+        tlv_put_str(&b, TAG_BASE_NICK, account);
+    int rc = client_send_frame(cc, type, b.buf, (uint32_t)b.len);
+    tlv_builder_free(&b);
+    return rc;
 }
 
 /* Read incoming frames (non-blocking, call from poll loop) */

@@ -414,6 +414,9 @@ static const char *HELP_LINES[] = {"  ACCOUNT",
                                    "  /query   <nick>           Open a DM without sending",
                                    "  /reply   <message>        Reply to the last incoming DM",
                                    "  /unread or F5             Next unread conversation",
+                                   "  /buddies or F6            Open the buddy list",
+                                   "  /buddy add <account>      Watch an account's presence",
+                                   "  /buddy remove <account>   Remove a buddy",
                                    "  /clear                    Clear the local chat buffer",
                                    "  /closedm [nick]           Close a DM conversation",
                                    "  /away    [message]        Set away with optional message",
@@ -519,6 +522,46 @@ static void ui_redraw_emoji_modal(ui_state_t *ui) {
     delwin(w);
 }
 
+static void ui_redraw_buddies_modal(ui_state_t *ui, const cli_model_t *m) {
+    int width = ui->layout.cols - 2;
+    if (width > 64)
+        width = 64;
+    int height = ui->layout.rows - 2;
+    if (height > m->buddy_count + 5)
+        height = m->buddy_count + 5;
+    if (height < 6)
+        height = 6;
+    int visible = height - 4;
+    if (ui->buddy_cursor >= m->buddy_count)
+        ui->buddy_cursor = m->buddy_count ? m->buddy_count - 1 : 0;
+    int first = ui->buddy_cursor / visible * visible;
+    WINDOW *w =
+        newwin(height, width, (ui->layout.rows - height) / 2, (ui->layout.cols - width) / 2);
+    if (!w)
+        return;
+    box(w, 0, 0);
+    mvwaddstr(w, 0, 2, " Buddies ");
+    if (!m->buddy_count)
+        draw_text(w, 1, 2, "/buddy add <account> to add someone", width - 4);
+    for (int i = first; i < m->buddy_count && i < first + visible; i++) {
+        const cli_buddy_t *b = &m->buddies[i];
+        char label[128];
+        const char *state = !b->presence ? "offline" : b->presence == 2 ? "away" : "online";
+        snprintf(label, sizeof(label), "%s %s%s%s", state, b->account,
+                 b->presence && strcmp(b->nick, b->account) ? " @" : "",
+                 b->presence && strcmp(b->nick, b->account) ? b->nick : "");
+        if (i == ui->buddy_cursor)
+            wattron(w, A_REVERSE);
+        draw_text(w, i - first + 1, 2, label, width - 4);
+        wattroff(w, A_REVERSE);
+    }
+    if (m->buddy_count && m->buddies[ui->buddy_cursor].presence == 2)
+        draw_text(w, height - 3, 2, m->buddies[ui->buddy_cursor].away_msg, width - 4);
+    draw_text(w, height - 2, 2, "Enter: DM | R: refresh | Esc: close", width - 4);
+    wnoutrefresh(w);
+    delwin(w);
+}
+
 /* Full redraw */
 
 void ui_redraw(ui_state_t *ui, cli_model_t *m) {
@@ -531,7 +574,10 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui->dirty = false;
         return;
     }
-    mvaddnstr(ui->layout.rows - 2, 0, "[Close] [Help] [Latest] [Quit] [Emoji]", ui->layout.cols);
+    mvaddnstr(ui->layout.rows - 2, 0,
+              ui->layout.cols >= 49 ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies]"
+                                    : "[Close] [Help] [Latest] [Quit] [Emoji]",
+              ui->layout.cols);
     wnoutrefresh(stdscr);
     ui_redraw_topbar(ui, m);
     ui_redraw_topic(ui, m);
@@ -543,6 +589,8 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui_redraw_help_modal(ui);
     if (ui->show_emoji_modal)
         ui_redraw_emoji_modal(ui);
+    if (ui->show_buddies_modal)
+        ui_redraw_buddies_modal(ui, m);
     if (ui->confirm_quit) {
         int width = ui->layout.cols < 48 ? ui->layout.cols - 2 : 46;
         WINDOW *dialog = newwin(5, width, (ui->layout.rows - 5) / 2, (ui->layout.cols - width) / 2);

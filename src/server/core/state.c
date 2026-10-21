@@ -11,6 +11,7 @@
 #include "proto/frame.h"
 #include "proto/tlv.h"
 #include "proto/types.h"
+#include "server/buddies.h"
 #include "server/db.h"
 #include "server/log.h"
 #include "server/state.h"
@@ -141,6 +142,8 @@ void server_unregister_conn(server_state_t *s, conn_t *c) {
         s->conns[c->fd] = NULL;
         s->conn_count--;
     }
+    if (c->account_id && !server_find_by_account(s, c->account_id))
+        server_buddy_presence(s, c->account_id, true);
     /* remove from all rooms */
     for (int ri = 0; ri < s->room_count; ri++) {
         if (s->rooms[ri] && s->rooms[ri]->active) {

@@ -27,6 +27,8 @@ static const struct {
     [SND_MENTION] = {snd_mention_data, snd_mention_size},
     [SND_ERROR] = {snd_error_data, snd_error_size},
     [SND_TOPIC] = {snd_topic_data, snd_topic_size},
+    [SND_BUDDY_ONLINE] = {snd_buddy_online_data, snd_buddy_online_size},
+    [SND_BUDDY_OFFLINE] = {snd_buddy_offline_data, snd_buddy_offline_size},
 };
 
 static char players[3][PATH_MAX];

@@ -14,6 +14,7 @@
 #include "proto/frame.h"
 #include "proto/tlv.h"
 #include "proto/types.h"
+#include "server/buddies.h"
 #include "server/conn.h"
 #include "server/db.h"
 #include "server/dispatch.h"
@@ -114,7 +115,7 @@ static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
                 "            |_|        Welcome to CupidChat v1.0\n"
                 "\n"
                 "Type /help for a list of commands.");
-    tlv_put_u32(&b, TAG_CAPS, CAP_HISTORY); /* TLS/files when ready */
+    tlv_put_u32(&b, TAG_CAPS, CAP_HISTORY | CAP_BUDDIES);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     conn_send_frame(c, SMSG_WELCOME, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), p, plen, s->cfg);
@@ -327,6 +328,10 @@ static int handle_dm(conn_t *c, const frame_t *f, server_state_t *s) {
     conn_t *target = server_find_by_nick(s, target_nick);
     if (!target)
         return send_error(c, ERR_UNKNOWN, "no such user", s);
+    uint32_t expected_uid = 0;
+    tlv_read_u32(f->payload, f->hdr.length, TAG_PEER_UID, &expected_uid);
+    if (expected_uid && expected_uid != target->user_id)
+        return send_error(c, ERR_UNKNOWN, "User reconnected or changed; reopen the DM", s);
 
     uint64_t dm_ts = now_ms();
 
@@ -540,6 +545,11 @@ static int server_do_rename(conn_t *c, const char *new_nick, server_msg_t confir
     free(cp);
 
     LOG_INFO("fd=%d uid=%u rename: %s -> %s", c->fd, c->user_id, old_nick, new_nick);
+    if (c->account_id) {
+        if (confirm_type == SMSG_REGISTER_OK || confirm_type == SMSG_LOGIN_OK)
+            server_send_buddies(s, c);
+        server_buddy_presence(s, c->account_id, false);
+    }
     return 0;
 }
 
@@ -644,8 +654,11 @@ static int handle_logout(conn_t *c, const frame_t *f, server_state_t *s) {
         existing = server_find_by_nick(s, guest_nick);
     }
 
+    uint64_t account = c->account_id;
     c->registered = false;
     c->account_id = 0;
+    c->buddy_count = 0;
+    server_buddy_presence(s, account, true);
     return server_do_rename(c, guest_nick, SMSG_LOGOUT_OK, s);
 }
 
@@ -733,6 +746,7 @@ static int handle_away(conn_t *c, const frame_t *f, server_state_t *s) {
 
     c->is_away = (away_msg[0] != '\0');
     snprintf(c->away_msg, sizeof(c->away_msg), "%s", away_msg);
+    server_buddy_presence(s, c->account_id, false);
 
     /* broadcast SMSG_USER_AWAY to all rooms the user is in */
     tlv_builder_t b;
@@ -812,6 +826,10 @@ int dispatch_frame(conn_t *c, const frame_t *f, server_state_t *s) {
             return handle_ping(c, f, s);
         case CMSG_PONG:
             return handle_pong(c, f, s);
+        case CMSG_BUDDY_ADD:
+        case CMSG_BUDDY_REMOVE:
+        case CMSG_BUDDY_LIST:
+            return server_buddy_command(s, c, f);
         /* file transfer: not yet implemented */
         case CMSG_FILE_OFFER:
         case CMSG_FILE_ACCEPT:
