@@ -85,9 +85,12 @@ Build outputs:
 
 The build runs `scripts/gen_sounds.py` automatically to embed the WAV files in `sounds/` as C byte arrays compiled into the client binary. The `sounds/` directory is only needed at build time.
 
-All builds include AddressSanitizer and UBSan (`-fsanitize=address,undefined`) for early bug detection.
+Builds include AddressSanitizer and UBSan (`-fsanitize=address,undefined`) by default. Pass `SAN=` for a build without sanitizers.
 
 ## Quick start
+
+For a persistent Linux service on a Proxmox guest and client access over
+Tailscale, see [server deployment](deploy/README.md).
 
 ### 1. Start the server
 
