@@ -46,7 +46,7 @@ int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
             return ui_profile_target(ui, ui->name_hits[i].uid, ui->name_hits[i].nick, NULL);
     if (y == 0)
         return ui_profile_target(ui, 0, NULL, m->base_nick);
-    if (y == 1 && m->active_dm >= 0 && m->active_dm < m->dm_count)
+    if (y == 1 && !m->banner[0] && m->active_dm >= 0 && m->active_dm < m->dm_count)
         return ui_profile_target(ui, m->dms[m->active_dm].peer_uid, m->dms[m->active_dm].peer_nick,
                                  NULL);
     if (ui->show_users && x >= ui->layout.cols - ui->layout.users_w && y >= 3 &&
