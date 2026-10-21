@@ -48,6 +48,8 @@ $(shell mkdir -p $(BUILDDIR)/server/core  \
                  $(BUILDDIR)/tests/proto  \
                  $(BUILDDIR)/tests/server)
 
+$(shell mkdir -p $(BUILDDIR)/tests/client)
+
 # Embedded sound data — generated from sounds/*.wav at build time
 SOUNDS_GEN_C := src/client/sounds_data.c
 SOUNDS_GEN_H := include/client/sounds_data.h
@@ -116,7 +118,8 @@ CLIENT_BIN := cupid-chat
 TEST_BINS := \
     $(BUILDDIR)/tests/proto/test_frame \
     $(BUILDDIR)/tests/proto/test_tlv   \
-    $(BUILDDIR)/tests/server/test_rate_limit
+    $(BUILDDIR)/tests/server/test_rate_limit \
+    $(BUILDDIR)/tests/client/test_ui
 
 # Default target 
 .PHONY: all clean check install
@@ -125,10 +128,10 @@ all: $(SERVER_BIN) $(CLIENT_BIN)
 
 # Link binaries 
 $(SERVER_BIN): $(SERVER_OBJ) $(SHARED_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDTLS) -lsqlite3 -lcrypt
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ $(LDTLS) -lsqlite3 -lcrypt
 
 $(CLIENT_BIN): $(CLIENT_OBJ) $(SHARED_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@ -lncurses $(LDTLS)
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncurses $(LDTLS)
 
 # Compile rule 
 $(BUILDDIR)/%.o: src/%.c
@@ -136,21 +139,27 @@ $(BUILDDIR)/%.o: src/%.c
 
 # Tests 
 $(BUILDDIR)/tests/proto/test_frame: $(TESTDIR)/proto/test_frame.c $(SHARED_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@
 
 $(BUILDDIR)/tests/proto/test_tlv: $(TESTDIR)/proto/test_tlv.c $(SHARED_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@
 
 $(BUILDDIR)/tests/server/test_rate_limit: \
     $(TESTDIR)/server/test_rate_limit.c \
     $(BUILDDIR)/server/core/rate_limit.o \
     $(SHARED_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@
 
 check: $(TEST_BINS)
 	@echo "=== Running unit tests ==="
-	@for t in $(TEST_BINS); do echo "--- $$t ---"; $$t; done
+	@set -e; for t in $(TEST_BINS); do echo "--- $$t ---"; $$t; done
 	@echo "=== All tests done ==="
+
+$(BUILDDIR)/tests/client/test_ui: $(TESTDIR)/client/test_ui.c \
+    $(BUILDDIR)/client/state/model.o $(BUILDDIR)/client/state/history.o \
+    $(BUILDDIR)/client/ui/layout.o $(BUILDDIR)/client/ui/input.o \
+    $(BUILDDIR)/client/ui/render.o
+	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncurses
 
 clean:
 	rm -rf $(BUILDDIR) $(SERVER_BIN) $(CLIENT_BIN) \

@@ -1,0 +1,33 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        mode: [release, sanitizers]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libsqlite3-dev libncurses-dev libcrypt-dev python3
+      - name: Build
+        run: |
+          if [ "${{ matrix.mode }}" = release ]; then
+            make -j2 SAN=
+          else
+            make -j2
+          fi
+      - name: Test
+        run: |
+          if [ "${{ matrix.mode }}" = release ]; then
+            make SAN= check
+          else
+            make check
+          fi
+      - name: Exercise terminal input and resize
+        if: hashFiles('tests/client/test_terminal.py') != ''
+        run: python3 tests/client/test_terminal.py

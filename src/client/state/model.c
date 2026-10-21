@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "client/model.h"
+#include "client/history.h"
 
 /* Lifecycle */
 
@@ -60,11 +61,13 @@ cli_room_t *model_get_or_create_room(cli_model_t *m, const char *name) {
     return r;
 }
 
-static void room_push_msg(cli_room_t *r, uint32_t uid, const char *nick,
+static void room_push_msg(cli_model_t *model, cli_room_t *r, uint32_t uid, const char *nick,
                           const char *base_nick,
                           const char *text, uint64_t ts_ms, bool self,
                           cli_msg_type_t type, const char *my_nick) {
     if (!r->msgs) return;
+    bool new_day = r->msgs_len && !history_same_day(ts_ms,
+        r->msgs[(r->msgs_head + r->msgs_cap - 1) % r->msgs_cap].timestamp_ms);
     cli_msg_t *m = &r->msgs[r->msgs_head];
     memset(m, 0, sizeof(*m));
     m->user_id      = uid;
@@ -75,6 +78,10 @@ static void room_push_msg(cli_room_t *r, uint32_t uid, const char *nick,
     if (base_nick && base_nick[0] && strcmp(base_nick, nick) != 0)
         strncpy(m->base_nick, base_nick, CLI_NICK_MAX - 1);
     strncpy(m->text, text, CLI_MSG_MAX - 1);
+    if (r->scroll_offset > 0) {
+        bool ignored = (type == MSG_CHAT || type == MSG_ACTION) && model_is_ignored(model, nick);
+        r->scroll_offset += history_message_rows(m, r->view_width, ignored) + new_day;
+    }
     /* set highlight if someone mentioned our nick (never self-highlight) */
     m->is_highlight = !self && my_nick && my_nick[0]
                       && strcasestr(text, my_nick) != NULL;
@@ -92,7 +99,7 @@ void model_push_room_msg(cli_model_t *m, const char *room,
                          const char *my_nick) {
     cli_room_t *r = model_get_or_create_room(m, room);
     if (!r) return;
-    room_push_msg(r, uid, nick, base_nick, text, ts_ms, self, MSG_CHAT, my_nick);
+    room_push_msg(m, r, uid, nick, base_nick, text, ts_ms, self, MSG_CHAT, my_nick);
 }
 
 void model_push_room_msg_typed(cli_model_t *m, const char *room,
@@ -103,7 +110,7 @@ void model_push_room_msg_typed(cli_model_t *m, const char *room,
                                 const char *my_nick) {
     cli_room_t *r = model_get_or_create_room(m, room);
     if (!r) return;
-    room_push_msg(r, uid, nick, base_nick, text, ts_ms, self, type, my_nick);
+    room_push_msg(m, r, uid, nick, base_nick, text, ts_ms, self, type, my_nick);
 }
 
 void model_push_system_msg(cli_model_t *m, const char *room,
@@ -111,7 +118,7 @@ void model_push_system_msg(cli_model_t *m, const char *room,
                            cli_msg_type_t type) {
     cli_room_t *r = model_get_or_create_room(m, room);
     if (!r) return;
-    room_push_msg(r, 0, "", "", text, ts_ms, false, type, NULL);
+    room_push_msg(m, r, 0, "", "", text, ts_ms, false, type, NULL);
 }
 
 void model_clear_room_msgs(cli_model_t *m, const char *room) {
@@ -157,6 +164,8 @@ void model_push_dm_msg(cli_model_t *m, uint32_t uid, const char *nick,
     cli_dm_t *d = model_get_or_create_dm(m, uid, nick);
     if (!d || !d->msgs) return;
 
+    bool new_day = d->msgs_len && !history_same_day(ts_ms,
+        d->msgs[(d->msgs_head + d->msgs_cap - 1) % d->msgs_cap].timestamp_ms);
     cli_msg_t *msg = &d->msgs[d->msgs_head];
     memset(msg, 0, sizeof(*msg));
     msg->user_id      = uid;
@@ -169,6 +178,9 @@ void model_push_dm_msg(cli_model_t *m, uint32_t uid, const char *nick,
     const char *src_nick = self ? m->nick : nick;
     snprintf(msg->nick, CLI_NICK_MAX, "%s", src_nick);
     strncpy(msg->text, text, CLI_MSG_MAX - 1);
+    if (d->scroll_offset > 0)
+        d->scroll_offset += history_message_rows(msg, d->view_width,
+            model_is_ignored(m, msg->nick)) + new_day;
     d->msgs_head = (d->msgs_head + 1) % d->msgs_cap;
     if (d->msgs_len < d->msgs_cap) d->msgs_len++;
     if (!self) d->unread++;
@@ -189,4 +201,44 @@ void model_update_users(cli_model_t *m, const char *room,
     int n = count < CLI_MAX_USERS ? count : CLI_MAX_USERS;
     memcpy(m->users, users, (size_t)n * sizeof(cli_user_t));
     m->user_count = n;
+}
+
+void model_select_fallback(cli_model_t *m) {
+    m->active_room = m->active_dm = -1;
+    for (int i = 0; i < m->room_count; i++) {
+        if (m->rooms[i].active && m->rooms[i].joined) {
+            m->active_room = i;
+            return;
+        }
+    }
+    if (m->dm_count > 0) m->active_dm = 0;
+}
+
+bool model_close_dm(cli_model_t *m, int index) {
+    if (index < 0 || index >= m->dm_count) return false;
+    bool selected = m->active_dm == index;
+    free(m->dms[index].msgs);
+    memmove(&m->dms[index], &m->dms[index + 1],
+            (size_t)(m->dm_count - index - 1) * sizeof(cli_dm_t));
+    m->dm_count--;
+    memset(&m->dms[m->dm_count], 0, sizeof(cli_dm_t));
+    if (selected) model_select_fallback(m);
+    else if (m->active_dm > index) m->active_dm--;
+    return true;
+}
+
+bool model_remove_room(cli_model_t *m, const char *name) {
+    for (int i = 0; i < m->room_count; i++) {
+        if (strcmp(m->rooms[i].name, name)) continue;
+        bool selected = m->active_room == i;
+        free(m->rooms[i].msgs);
+        memmove(&m->rooms[i], &m->rooms[i + 1],
+                (size_t)(m->room_count - i - 1) * sizeof(cli_room_t));
+        m->room_count--;
+        memset(&m->rooms[m->room_count], 0, sizeof(cli_room_t));
+        if (selected) model_select_fallback(m);
+        else if (m->active_room > i) m->active_room--;
+        return true;
+    }
+    return false;
 }

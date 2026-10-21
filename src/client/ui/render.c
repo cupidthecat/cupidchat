@@ -9,7 +9,7 @@
 
 #include "client/ui.h"
 #include "client/model.h"
-/* history.h not needed chat uses direct ring arithmetic */
+#include "client/history.h"
 
 #define CP_TOPBAR   1
 #define CP_ROOM     2
@@ -81,8 +81,12 @@ void ui_redraw_topbar(ui_state_t *ui, const cli_model_t *m) {
         m->status == CLI_ONLINE       ? "[*]" :
         m->status == CLI_CONNECTING   ? "[~]" : "[ ]";
     char line[512];
-    const char *room_str = (m->active_room >= 0 && m->active_room < m->room_count)
-                         ? m->rooms[m->active_room].name : "(no room)";
+    char chat[80];
+    if (m->active_room >= 0 && m->active_room < m->room_count)
+        snprintf(chat, sizeof(chat), "#%.64s", m->rooms[m->active_room].name);
+    else if (m->active_dm >= 0 && m->active_dm < m->dm_count)
+        snprintf(chat, sizeof(chat), "@%.32s", m->dms[m->active_dm].peer_nick);
+    else snprintf(chat, sizeof(chat), "(no chat)");
     /* show "nick (base_nick)" in topbar when user has renamed */
     char nick_display[70] = {0};
     if (m->base_nick[0] && strcmp(m->nick, m->base_nick) != 0)
@@ -94,9 +98,9 @@ void ui_redraw_topbar(ui_state_t *ui, const cli_model_t *m) {
         size_t nd_len = strlen(nick_display);
         snprintf(nick_display + nd_len, sizeof(nick_display) - nd_len, " [away]");
     }
-    snprintf(line, sizeof(line), " %s %s | %s | #%s ",
+    snprintf(line, sizeof(line), " %s %s | %s | %s ",
              status, m->server_name[0] ? m->server_name : "cupidchat",
-             nick_display, room_str);
+             nick_display, chat);
 
     /* status message */
     if (m->status_msg[0] && time(NULL) < m->status_msg_until) {
@@ -124,89 +128,50 @@ void ui_redraw_topbar(ui_state_t *ui, const cli_model_t *m) {
 void ui_redraw_rooms(ui_state_t *ui, const cli_model_t *m) {
     WINDOW *w = W(ui, ui->win_rooms);
     if (!w) return;
+    ui_clamp_navigation(ui, m);
     werase(w);
     wattron(w, COLOR_PAIR(CP_BORDER));
     mvwvline(w, 0, ui->layout.rooms_w - 1, ACS_VLINE, ui->layout.chat_h);
     wattroff(w, COLOR_PAIR(CP_BORDER));
-
-    int row = 0;
-    wattron(w, A_DIM);
-    mvwaddstr(w, row++, 1, "ROOMS");
-    wattroff(w, A_DIM);
-
-    for (int i = 0; i < m->room_count && row < ui->layout.chat_h; i++) {
-        const cli_room_t *r = &m->rooms[i];
-        if (!r->active) continue;
-
-        bool is_active  = (i == m->active_room);
-        bool is_nav     = (i == ui->nav_cursor);
-
-        if (is_nav)    wattron(w, A_REVERSE);
-        if (is_active) wattron(w, A_BOLD | COLOR_PAIR(CP_ROOM));
-        else if (r->unread > 0) wattron(w, A_BOLD);
-
-        char label[26];
-        if (r->unread > 0)
-            snprintf(label, sizeof(label), "%s%-*s %d",
-                     r->owner_uid && r->owner_uid == m->user_id ? "~" : "#",
-                     ui->layout.rooms_w - 6, r->name, r->unread);
-        else
-            snprintf(label, sizeof(label), "%s%s",
-                     r->owner_uid && r->owner_uid == m->user_id ? "~" : "#",
-                     r->name);
+    mvwaddnstr(w, 0, 1, "CHATS", ui->layout.rooms_w - 2);
+    int total = m->room_count + m->dm_count;
+    for (int row = 1, index = ui->sidebar_offset;
+         row < ui->layout.chat_h && index < total; row++, index++) {
+        bool room = index < m->room_count;
+        bool active = room ? index == m->active_room
+                           : m->active_room < 0 && index - m->room_count == m->active_dm;
+        char label[96];
+        if (room) {
+            const cli_room_t *r = &m->rooms[index];
+            char marker = !r->joined ? '+' : r->owner_uid && r->owner_uid == m->user_id ? '~' : '#';
+            snprintf(label, sizeof(label), "%c%.64s%s", marker,
+                     r->name, r->unread ? " *" : "");
+            if (!r->joined) wattron(w, A_DIM);
+        } else {
+            const cli_dm_t *d = &m->dms[index - m->room_count];
+            snprintf(label, sizeof(label), "@%.32s%s", d->peer_nick, d->unread ? " *" : "");
+        }
+        if (active) wattron(w, A_BOLD | COLOR_PAIR(CP_ROOM));
+        if (index == ui->nav_cursor) wattron(w, A_REVERSE);
         mvwaddnstr(w, row, 1, label, ui->layout.rooms_w - 2);
-        row++;
-
-        if (is_active) wattroff(w, A_BOLD | COLOR_PAIR(CP_ROOM));
-        else if (r->unread > 0) wattroff(w, A_BOLD);
-        if (is_nav)    wattroff(w, A_REVERSE);
+        wattroff(w, A_DIM | A_BOLD | A_REVERSE | COLOR_PAIR(CP_ROOM));
     }
-
-    /* DM entries */
-    for (int i = 0; i < m->dm_count && row < ui->layout.chat_h; i++) {
-        bool is_active = (i == m->active_dm && m->active_room < 0);
-        bool is_nav    = (i + m->room_count == ui->nav_cursor);
-        const cli_dm_t *d = &m->dms[i];
-        if (is_nav)    wattron(w, A_REVERSE);
-        if (is_active) wattron(w, A_BOLD | COLOR_PAIR(CP_PEER));
-        char label[24];
-        snprintf(label, sizeof(label), "@%s", d->peer_nick);
-        mvwaddnstr(w, row++, 1, label, ui->layout.rooms_w - 2);
-        if (is_active) wattroff(w, A_BOLD | COLOR_PAIR(CP_PEER));
-        if (is_nav)    wattroff(w, A_REVERSE);
-    }
-
     wnoutrefresh(w);
 }
 
 /* Chat pane */
 
-/* Integer calendar day (UTC) from a millisecond timestamp. */
-static int msg_day(const cli_msg_t *msg) {
-    return (int)(msg->timestamp_ms / 86400000ULL);
-}
-
-/* Draw one row:    Wednesday Feb 26, 2026   (A_DIM, ACS_HLINE) */
-static void render_date_separator(WINDOW *w, int row, int chat_w, uint64_t ts_ms) {
+static void render_date_separator(WINDOW *w, int row, int width, uint64_t ts_ms) {
     time_t ts = (time_t)(ts_ms / 1000);
-    struct tm tm_buf;
-    localtime_r(&ts, &tm_buf);
-    char date_str[40];
-    strftime(date_str, sizeof(date_str), "%A %b %d, %Y", &tm_buf);
-
-    int label_len = (int)strlen(date_str) + 2;  /* spaces on each side */
-    int line_w    = (chat_w - label_len) / 2;
-    if (line_w < 1) line_w = 1;
-
-    wmove(w, row, 0);
+    struct tm day;
+    localtime_r(&ts, &day);
+    char label[64];
+    strftime(label, sizeof(label), " %A %b %d, %Y ", &day);
+    int length = (int)strlen(label);
+    if (length > width) length = width;
     wattron(w, A_DIM);
-    for (int x = 0; x < line_w; x++)
-        waddch(w, ACS_HLINE);
-    waddch(w, ' ');
-    waddstr(w, date_str);
-    waddch(w, ' ');
-    for (int x = 0; x < line_w; x++)
-        waddch(w, ACS_HLINE);
+    mvwhline(w, row, 0, ACS_HLINE, width);
+    mvwaddnstr(w, row, (width - length) / 2, label, length);
     wattroff(w, A_DIM);
 }
 
@@ -221,353 +186,118 @@ static bool can_group(const cli_msg_t *prev, const cli_msg_t *msg) {
     return true;
 }
 
-/* Returns the number of terminal rows msg will occupy in a chat_w-wide pane.
- * Pass ignored=true to get the 1-row stub height. */
-static int msg_row_count(const cli_msg_t *msg, int chat_w, bool ignored) {
-    if (ignored) return 1;   /* stubbed to one dim line */
-    int nick_len      = (int)strnlen(msg->nick,      16);
-    int base_nick_len = (int)strnlen(msg->base_nick, 16);
-    bool has_base = (msg->base_nick[0] != '\0');
-    int prefix_w;
-    switch (msg->type) {
-        case MSG_JOIN: case MSG_PART: case MSG_QUIT: case MSG_SYSTEM:
-            prefix_w = 10;               /* "HH:MM *** " */
-            break;
-        case MSG_ACTION:
-            /* "HH:MM * nick " or "HH:MM * nick (base) " */
-            prefix_w = has_base ? 12 + nick_len + base_nick_len
-                                :  9 + nick_len;
-            break;
-        case MSG_CHAT: default:
-            /* "HH:MM nick: " or "HH:MM nick (base): " */
-            prefix_w = has_base ? 11 + nick_len + base_nick_len
-                                :  8 + nick_len;
-            break;
-    }
-    int text_w = chat_w - prefix_w;
-    if (text_w < 1) text_w = 1;
-    int tlen = (int)strlen(msg->text);
-    if (tlen == 0) return 1;
-    return (tlen + text_w - 1) / text_w;
-}
-
-/* Render msg starting at `row`, wrapping onto subsequent rows.
- * Does not write beyond row + rows_avail - 1.
- * When grouped=true the timestamp+nick header is replaced by blank indent.
- * When ignored=true renders a single dim stub line.
- * Returns the number of rows consumed. */
-static int render_msg_line(WINDOW *w, int row, int rows_avail, int chat_w,
-                            const cli_msg_t *msg, const char *my_nick,
-                            bool grouped, bool ignored) {
-    if (ignored) {
-        /* single dim stub: "HH:MM <nick> [ignored]" */
-        time_t ts = (time_t)(msg->timestamp_ms / 1000);
-        struct tm tm_buf;
-        localtime_r(&ts, &tm_buf);
-        char tstr[8]; strftime(tstr, sizeof(tstr), "%H:%M", &tm_buf);
-        wmove(w, row, 0);
-        wattron(w, A_DIM);
-        waddnstr(w, tstr, 5); waddch(w, ' ');
-        waddnstr(w, msg->nick, 16);
-        waddstr(w, " [ignored]");
-        wattroff(w, A_DIM);
-        return 1;
-    }
+static void render_message_row(WINDOW *w, int row, int width,
+                               const cli_msg_t *msg, const char *my_nick,
+                               int line, bool grouped, bool ignored) {
+    char prefix[96], text[CLI_MSG_MAX];
     time_t ts = (time_t)(msg->timestamp_ms / 1000);
-    struct tm tm_buf;
-    localtime_r(&ts, &tm_buf);
-    char tstr[8];
-    strftime(tstr, sizeof(tstr), "%H:%M", &tm_buf);
-
-    int nick_len = (int)strnlen(msg->nick, 16);
-    int rows_written = 0;
-
-    switch (msg->type) {
-        case MSG_JOIN:
-        case MSG_PART:
-        case MSG_QUIT:
-        case MSG_SYSTEM: {
-            int prefix_w = 10;  /* "HH:MM *** " */
-            int text_w   = chat_w - prefix_w;
-            if (text_w < 1) text_w = 1;
-            const char *p  = msg->text;
-            int         rem = (int)strlen(p);
-            while (rows_written < rows_avail) {
-                wmove(w, row + rows_written, 0);
-                if (rows_written == 0) {
-                    wattron(w, A_DIM);
-                    waddnstr(w, tstr, 5); waddch(w, ' ');
-                    wattroff(w, A_DIM);
-                    wattron(w, COLOR_PAIR(CP_SYSTEM) | A_DIM);
-                    waddstr(w, "*** ");
-                    wattroff(w, COLOR_PAIR(CP_SYSTEM) | A_DIM);
-                } else {
-                    wmove(w, row + rows_written, prefix_w);
-                }
-                int chunk = rem < text_w ? rem : text_w;
-                wattron(w, COLOR_PAIR(CP_SYSTEM) | A_DIM);
-                waddnstr(w, p, chunk);
-                wattroff(w, COLOR_PAIR(CP_SYSTEM) | A_DIM);
-                p += chunk; rem -= chunk; rows_written++;
-                if (rem <= 0) break;
-            }
-            break;
-        }
-
-        case MSG_ACTION: {
-            bool has_base = (msg->base_nick[0] != '\0');
-            int base_nick_len = has_base ? (int)strnlen(msg->base_nick, 16) : 0;
-            /* "HH:MM * nick " or "HH:MM * nick (base) " */
-            int prefix_w = has_base ? 12 + nick_len + base_nick_len
-                                    :  9 + nick_len;
-            int text_w   = chat_w - prefix_w;
-            if (text_w < 1) text_w = 1;
-            int         cp  = nick_color(msg->nick, my_nick);
-            const char *p   = msg->text;
-            int         rem = (int)strlen(p);
-            while (rows_written < rows_avail) {
-                wmove(w, row + rows_written, 0);
-                if (rows_written == 0) {
-                    if (grouped) {
-                        for (int k = 0; k < prefix_w; k++) waddch(w, ' ');
-                    } else {
-                        wattron(w, A_DIM);
-                        waddnstr(w, tstr, 5); waddch(w, ' ');
-                        wattroff(w, A_DIM);
-                        wattron(w, COLOR_PAIR(cp));
-                        waddstr(w, "* ");
-                        waddnstr(w, msg->nick, 16);
-                        if (has_base) {
-                            waddstr(w, " (");
-                            waddnstr(w, msg->base_nick, 16);
-                            waddch(w, ')');
-                        }
-                        waddch(w, ' ');
-                        wattroff(w, COLOR_PAIR(cp));
-                    }
-                } else {
-                    wmove(w, row + rows_written, prefix_w);
-                }
-                int chunk = rem < text_w ? rem : text_w;
-                if (msg->is_highlight) wattron(w, A_BOLD | A_REVERSE);
-                waddnstr(w, p, chunk);
-                if (msg->is_highlight) wattroff(w, A_BOLD | A_REVERSE);
-                p += chunk; rem -= chunk; rows_written++;
-                if (rem <= 0) break;
-            }
-            break;
-        }
-
-        case MSG_CHAT:
-        default: {
-            bool has_base = (msg->base_nick[0] != '\0');
-            int base_nick_len = has_base ? (int)strnlen(msg->base_nick, 16) : 0;
-            /* "HH:MM nick: " or "HH:MM nick (base): " */
-            int prefix_w = has_base ? 11 + nick_len + base_nick_len
-                                    :  8 + nick_len;
-            int text_w   = chat_w - prefix_w;
-            if (text_w < 1) text_w = 1;
-            int         cp  = nick_color(msg->nick, my_nick);
-            const char *p   = msg->text;
-            int         rem = (int)strlen(p);
-            while (rows_written < rows_avail) {
-                wmove(w, row + rows_written, 0);
-                if (rows_written == 0) {
-                    if (grouped) {
-                        for (int k = 0; k < prefix_w; k++) waddch(w, ' ');
-                    } else {
-                        wattron(w, A_DIM);
-                        waddnstr(w, tstr, 5); waddch(w, ' ');
-                        wattroff(w, A_DIM);
-                        wattron(w, COLOR_PAIR(cp) | A_BOLD);
-                        waddnstr(w, msg->nick, 16);
-                        wattroff(w, COLOR_PAIR(cp) | A_BOLD);
-                        if (has_base) {
-                            wattron(w, A_DIM);
-                            waddstr(w, " (");
-                            waddnstr(w, msg->base_nick, 16);
-                            waddch(w, ')');
-                            wattroff(w, A_DIM);
-                        }
-                        waddstr(w, ": ");
-                    }
-                } else {
-                    wmove(w, row + rows_written, prefix_w);
-                }
-                int chunk = rem < text_w ? rem : text_w;
-                if (msg->is_highlight) wattron(w, A_BOLD | A_REVERSE);
-                waddnstr(w, p, chunk);
-                if (msg->is_highlight) wattroff(w, A_BOLD | A_REVERSE);
-                p += chunk; rem -= chunk; rows_written++;
-                if (rem <= 0) break;
-            }
-            break;
-        }
+    struct tm stamp;
+    localtime_r(&ts, &stamp);
+    char clock[8];
+    strftime(clock, sizeof(clock), "%H:%M", &stamp);
+    bool system = msg->type == MSG_SYSTEM || msg->type == MSG_JOIN ||
+                  msg->type == MSG_PART || msg->type == MSG_QUIT;
+    if (ignored) {
+        snprintf(prefix, sizeof(prefix), "%s %.16s [ignored]", clock, msg->nick);
+        wattron(w, A_DIM);
+        mvwaddnstr(w, row, 0, prefix, width);
+        wattroff(w, A_DIM);
+        return;
     }
-    return rows_written > 0 ? rows_written : 1;
+    if (system) snprintf(prefix, sizeof(prefix), "%s *** ", clock);
+    else if (msg->base_nick[0])
+        snprintf(prefix, sizeof(prefix), "%s %s%.16s (%.16s)%s", clock,
+                 msg->type == MSG_ACTION ? "* " : "", msg->nick, msg->base_nick,
+                 msg->type == MSG_ACTION ? " " : ": ");
+    else snprintf(prefix, sizeof(prefix), "%s %s%.16s%s", clock,
+                  msg->type == MSG_ACTION ? "* " : "", msg->nick,
+                  msg->type == MSG_ACTION ? " " : ": ");
+    int indent = history_prefix_width(msg, width);
+    int text_width = width - indent;
+    int offset = line * text_width;
+    int remaining = (int)strlen(msg->text) - offset;
+    int count = remaining < text_width ? remaining : text_width;
+    if (count < 0) count = 0;
+    memcpy(text, msg->text + offset, (size_t)count);
+    text[count] = '\0';
+    for (int i = 0; i < count; i++)
+        if ((unsigned char)text[i] < 32 || text[i] == 127) text[i] = ' ';
+    if (!line && !grouped) {
+        int color = system ? CP_SYSTEM : nick_color(msg->nick, my_nick);
+        wattron(w, COLOR_PAIR(color) | (system ? A_DIM : A_BOLD));
+        mvwaddnstr(w, row, 0, prefix, indent);
+        wattroff(w, COLOR_PAIR(color) | A_DIM | A_BOLD);
+    }
+    if (system) wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
+    if (msg->is_highlight) wattron(w, A_BOLD | A_REVERSE);
+    mvwaddnstr(w, row, indent, text, count);
+    wattroff(w, A_DIM | A_BOLD | A_REVERSE | COLOR_PAIR(CP_SYSTEM));
 }
 
-void ui_redraw_chat(ui_state_t *ui, const cli_model_t *m) {
+void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
     WINDOW *w = W(ui, ui->win_chat);
     if (!w) return;
     werase(w);
-
-    const cli_msg_t *buf   = NULL;
-    int cap = 0, head = 0, len = 0, scroll = 0;
-
+    const cli_msg_t *buf = NULL;
+    int cap = 0, head = 0, len = 0, *offset = NULL, *view_width = NULL, *unread = NULL;
     if (m->active_room >= 0 && m->active_room < m->room_count) {
-        const cli_room_t *r = &m->rooms[m->active_room];
-        buf    = r->msgs;
-        cap    = r->msgs_cap;
-        head   = r->msgs_head;
-        len    = r->msgs_len;
-        scroll = r->scroll_offset;
+        cli_room_t *r = &m->rooms[m->active_room];
+        buf = r->msgs; cap = r->msgs_cap; head = r->msgs_head; len = r->msgs_len;
+        offset = &r->scroll_offset; view_width = &r->view_width; unread = &r->unread;
     } else if (m->active_dm >= 0 && m->active_dm < m->dm_count) {
-        const cli_dm_t *d = &m->dms[m->active_dm];
-        buf    = d->msgs;
-        cap    = d->msgs_cap;
-        head   = d->msgs_head;
-        len    = d->msgs_len;
-        scroll = d->scroll_offset;
+        cli_dm_t *d = &m->dms[m->active_dm];
+        buf = d->msgs; cap = d->msgs_cap; head = d->msgs_head; len = d->msgs_len;
+        offset = &d->scroll_offset; view_width = &d->view_width; unread = &d->unread;
     }
-
-    const int chat_h = ui->layout.chat_h;
-    const int chat_w = ui->layout.chat_w;
-
+    int width = ui->layout.chat_w, height = ui->layout.chat_h - 1;
     if (!buf || len == 0) {
-        wattron(w, A_DIM);
-        mvwaddstr(w, 0, 1, "No messages yet.");
-        wattroff(w, A_DIM);
+        mvwaddnstr(w, 0, 0, "Select a chat. F1 opens help.", width);
         wnoutrefresh(w);
         return;
     }
-
-    /* Index of the oldest message in the ring buffer */
-    int oldest_idx = ((head - len) % cap + cap) % cap;
-
-    /* end_msg: 0-based offset from oldest of the most recent visible message.
-     * scroll=0 -> newest; scroll=N -> skip N from the end. */
-    int end_msg = len - 1 - scroll;
-    if (end_msg < 0) end_msg = 0;
-
-    /* Walk backwards from end_msg, collecting messages whose row heights
-     * fit within chat_h rows.  sel[] stores ring indices, newest first. */
-    int  sel[1024];
-    bool sel_ignored[1024];
-    int sel_count   = 0;
-    int rows_accum  = 0;
-
-    for (int i = end_msg; i >= 0; i--) {
-        int ri = (oldest_idx + i) % cap;
-        bool ign = ((buf[ri].type == MSG_CHAT || buf[ri].type == MSG_ACTION)
-                    && model_is_ignored(m, buf[ri].nick));
-        int h  = msg_row_count(&buf[ri], chat_w, ign);
-        /* count one extra row for a day-boundary separator above this message:
-         * between two adjacent messages when their calendar day differs
-         * before the very oldest message in the buffer (session start)
-         *
-         * IMPORTANT: the renderer always draws a session-start separator before
-         * the first (oldest) visible message when skip_above==0, using the
-         * prev_day==-1 branch even when all messages share the same calendar
-         * day.  We must account for that row here or the newest message(s) get
-         * pushed off the bottom of the pane. */
-        if (sel_count > 0) {
-            int newer_ri = sel[sel_count - 1];
-            if (msg_day(&buf[ri]) != msg_day(&buf[newer_ri])) {
-                h += 1;  /* day-boundary separator */
-            } else if (i == 0) {
-                h += 1;  /* session-start separator (same day, still rendered) */
-            }
-        } else if (i == 0) {
-            /* this is the oldest message in the whole buffer separator before it */
-            h += 1;
+    *offset = history_reflow_scroll(buf, cap, head, len, *view_width, width, *offset, m);
+    *view_width = width;
+    int total = history_total_rows(buf, cap, head, len, width, m);
+    int maximum = total > height ? total - height : 0;
+    if (*offset > maximum) *offset = maximum;
+    if (*offset < 0) *offset = 0;
+    if (!*offset) *unread = 0;
+    int first = total - height - *offset;
+    if (first < 0) first = 0;
+    int last = first + height;
+    int padding = total < height ? height - total : 0;
+    int oldest = (head - len + cap) % cap, logical_row = 0;
+    const cli_msg_t *prev = NULL;
+    bool prev_ignored = false;
+    for (int i = 0; i < len && logical_row < last; i++) {
+        const cli_msg_t *msg = &buf[(oldest + i) % cap];
+        bool separator = !prev || !history_same_day(prev->timestamp_ms, msg->timestamp_ms);
+        if (separator) {
+            if (logical_row >= first && logical_row < last)
+                render_date_separator(w, padding + logical_row - first, width, msg->timestamp_ms);
+            logical_row++;
         }
-        rows_accum += h;
-        sel[sel_count]         = ri;
-        sel_ignored[sel_count] = ign;
-        sel_count++;
-        if (sel_count >= 1024) break;
-        /* stop collecting only AFTER the message has been added, so the oldest
-         * visible message is never left out due to an exact-fill boundary */
-        if (rows_accum >= chat_h) break;
+        bool ignored = (msg->type == MSG_CHAT || msg->type == MSG_ACTION) && model_is_ignored(m, msg->nick);
+        int rows = history_message_rows(msg, width, ignored);
+        int begin = first > logical_row ? first - logical_row : 0;
+        for (int line = begin; line < rows && logical_row + line < last; line++)
+            render_message_row(w, padding + logical_row + line - first, width, msg, m->nick,
+                               line, !separator && !prev_ignored && can_group(prev, msg), ignored);
+        logical_row += rows;
+        prev = msg;
+        prev_ignored = ignored;
     }
-
-    /* How many messages sit above the viewport (not shown) */
-    int skip_above = (end_msg + 1) - sel_count;
-
-    /* If messages don't fill the pane, push them to the bottom */
-    int row = (rows_accum < chat_h) ? (chat_h - rows_accum) : 0;
-
-    /* Render oldest -> newest (sel is newest-first, so iterate reversed) */
-    int               prev_day = -1;
-    const cli_msg_t  *prev_msg = NULL;
-    for (int i = sel_count - 1; i >= 0; i--) {
-        const cli_msg_t *msg     = &buf[sel[i]];
-        bool             ignored = sel_ignored[i];
-        int this_day = msg_day(msg);
-
-        /* Decide whether to draw a date separator before this message:
-         *  * day changed from the previous rendered message
-         *  * OR this is the first message and it sits at the top of all history */
-        bool need_sep = (prev_day >= 0)
-                        ? (this_day != prev_day)
-                        : (skip_above == 0);   /* session/history start */
-
-        if (need_sep) {
-            int avail = chat_h - row;
-            if (avail > 0) {
-                render_date_separator(w, row, chat_w, msg->timestamp_ms);
-                row++;
-            }
-            prev_msg = NULL;   /* separator always breaks grouping */
-        }
-        prev_day = this_day;
-
-        bool grouped = !ignored && can_group(prev_msg, msg);
-
-        int avail = chat_h - row;
-        if (avail <= 0) break;
-        int used = render_msg_line(w, row, avail, chat_w, msg, m->nick, grouped, ignored);
-        row += used;
-        prev_msg = ignored ? NULL : msg;   /* ignored msgs don't influence grouping */
+    char status[160];
+    if (*offset) snprintf(status, sizeof(status), " %d lines below | %d messages retained | F4 latest", *offset, len);
+    else snprintf(status, sizeof(status), " Live | %d messages retained", len);
+    if (!*offset && m->active_room >= 0) {
+        cli_room_t *r = &m->rooms[m->active_room];
+        if (r->typing_nick[0] && time(NULL) < r->typing_until)
+            snprintf(status, sizeof(status), " %.32s is typing...", r->typing_nick);
     }
-
-    /* scroll indicators */
-    if (skip_above > 0) {
-        char ind[80];
-        snprintf(ind, sizeof(ind), "  --- %d earlier messages (PgUp) ---", skip_above);
-        wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-        mvwaddnstr(w, 0, 0, ind, chat_w);
-        wattroff(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-    }
-    if (scroll > 0) {
-        char ind[80];
-        snprintf(ind, sizeof(ind), "  --- %d more messages below (PgDn) ---", scroll);
-        wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-        mvwaddnstr(w, chat_h - 1, 0, ind, chat_w);
-        wattroff(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-
-        /* top-right corner: "^ 47 lines" */
-        char badge[32];
-        snprintf(badge, sizeof(badge), " ^ %d lines ", scroll);
-        int blen = (int)strlen(badge);
-        wattron(w, A_REVERSE | A_BOLD);
-        mvwaddnstr(w, 0, chat_w - blen, badge, blen);
-        wattroff(w, A_REVERSE | A_BOLD);
-    }
-
-    /* typing indicator */
-    if (m->active_room >= 0 && m->active_room < m->room_count) {
-        const cli_room_t *tr = &m->rooms[m->active_room];
-        if (tr->typing_nick[0] && time(NULL) < tr->typing_until) {
-            char tind[80];
-            snprintf(tind, sizeof(tind), " * %s is typing...", tr->typing_nick);
-            wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-            mvwaddnstr(w, chat_h - 1, 0, tind, chat_w);
-            wattroff(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-        }
-    }
-
+    wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
+    mvwaddnstr(w, height, 0, status, width);
+    wattroff(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
     wnoutrefresh(w);
 }
 
@@ -604,9 +334,13 @@ void ui_redraw_input(ui_state_t *ui) {
     wattron(w, A_BOLD);
     waddstr(w, "> ");
     wattroff(w, A_BOLD);
-    waddnstr(w, ui->input_buf, ui->layout.cols - 3);
-    /* position cursor */
-    wmove(w, 0, 2 + ui->input_cursor);
+    int visible = ui->layout.cols - 3;
+    if (ui->input_cursor < ui->input_offset) ui->input_offset = ui->input_cursor;
+    if (ui->input_cursor >= ui->input_offset + visible)
+        ui->input_offset = ui->input_cursor - visible + 1;
+    if (ui->input_offset > ui->input_len) ui->input_offset = ui->input_len;
+    waddnstr(w, ui->input_buf + ui->input_offset, visible);
+    wmove(w, 0, 2 + ui->input_cursor - ui->input_offset);
     wnoutrefresh(w);
 }
 
@@ -640,7 +374,9 @@ static const char *HELP_LINES[] = {
     "  /help                     Show this help",
     "  /quit                     Exit CupidChat",
     "",
-    "  Press any key to close",
+    "  F1 help, F3/Ctrl+W close chat, F4 latest",
+    "  F10/Ctrl+Q quit, mouse wheel scrolls chat",
+    "  Up/Down scroll help; Esc closes it",
     NULL
 };
 
@@ -660,8 +396,8 @@ static void ui_redraw_help_modal(ui_state_t *ui) {
     /* +2 for the left/right border columns; inner content area = box_w - 2 */
     int box_w = max_line + 2;
     int box_h = nlines + 4;   /* 2 border rows + 1 title row + 1 blank */
-    if (box_w > cols - 4) box_w = cols - 4;
-    if (box_h > rows - 4) box_h = rows - 4;
+    if (box_w > cols - 2) box_w = cols - 2;
+    if (box_h > rows - 2) box_h = rows - 2;
 
     int starty = (rows - box_h) / 2;
     int startx = (cols - box_w) / 2;
@@ -676,12 +412,16 @@ static void ui_redraw_help_modal(ui_state_t *ui) {
     /* title line */
     const char *title = " CUPIDCHAT HELP ";
     int tx = (box_w - (int)strlen(title)) / 2;
-    mvwaddstr(w, 0, tx, title);
+    if (tx < 1) tx = 1;
+    mvwaddnstr(w, 0, tx, title, box_w - tx - 1);
 
     wattroff(w, A_BOLD);
 
     int row = 2;
-    for (const char **l = HELP_LINES; *l && row < box_h - 1; l++, row++) {
+    int maximum = nlines - (box_h - 3);
+    if (maximum < 0) maximum = 0;
+    if (ui->help_offset > maximum) ui->help_offset = maximum;
+    for (const char **l = HELP_LINES + ui->help_offset; *l && row < box_h - 1; l++, row++) {
         mvwaddnstr(w, row, 1, *l, box_w - 2);
     }
 
@@ -692,14 +432,36 @@ static void ui_redraw_help_modal(ui_state_t *ui) {
 
 /* Full redraw */
 
-void ui_redraw(ui_state_t *ui, const cli_model_t *m) {
+void ui_redraw(ui_state_t *ui, cli_model_t *m) {
+    erase();
+    if (ui->layout.too_small) {
+        mvaddnstr(0, 0, "Resize to at least 40x8. Ctrl+Q quits.", ui->layout.cols);
+        if (ui->confirm_quit && ui->layout.rows > 1)
+            mvaddnstr(1, 0, "Quit? Enter=yes, Esc=no", ui->layout.cols);
+        refresh();
+        ui->dirty = false;
+        return;
+    }
+    mvaddnstr(ui->layout.rows - 2, 0, "[Close] [Help] [Latest] [Quit]", ui->layout.cols);
+    wnoutrefresh(stdscr);
     ui_redraw_topbar(ui, m);
     ui_redraw_topic(ui, m);
-    ui_redraw_rooms(ui, m);
     ui_redraw_chat(ui, m);
+    ui_redraw_rooms(ui, m);
     ui_redraw_users(ui, m);
     ui_redraw_input(ui);
     if (ui->show_help_modal) ui_redraw_help_modal(ui);
+    if (ui->confirm_quit) {
+        int width = ui->layout.cols < 48 ? ui->layout.cols - 2 : 46;
+        WINDOW *dialog = newwin(5, width, (ui->layout.rows - 5) / 2, (ui->layout.cols - width) / 2);
+        if (dialog) {
+            box(dialog, 0, 0);
+            mvwaddnstr(dialog, 1, 2, "Quit CupidChat?", width - 4);
+            mvwaddnstr(dialog, 3, 2, "Enter: quit   Esc: keep chatting", width - 4);
+            wnoutrefresh(dialog);
+            delwin(dialog);
+        }
+    }
     doupdate();
     ui->dirty = false;
 }

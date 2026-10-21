@@ -69,17 +69,19 @@ def main() -> None:
         blobs.append((filename, name, data))
 
     # ── Header ─────────────────────────────────────────────────────────────
-    with open(out_h, "w") as fh:
+    with open(out_h, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(HEADER_BANNER)
-        for _, name, data in blobs:
+        for index, (_, name, data) in enumerate(blobs):
+            if index:
+                fh.write("\n")
             # Use #define for sizes so they are integer constant expressions
             # and can be used in static struct initialisers in sound.c.
             fh.write(f"/* {name} — {len(data)} bytes */\n")
             fh.write(f"extern const uint8_t snd_{name}_data[];\n")
-            fh.write(f"#define              snd_{name}_size   {len(data)}U\n\n")
+            fh.write(f"#define              snd_{name}_size   {len(data)}U\n")
 
     # ── Source ─────────────────────────────────────────────────────────────
-    with open(out_c, "w") as fc:
+    with open(out_c, "w", encoding="utf-8", newline="\n") as fc:
         fc.write(SOURCE_BANNER)
         for filename, name, data in blobs:
             fc.write(f"\n/* ── {filename} ({len(data)} bytes) ── */\n")
