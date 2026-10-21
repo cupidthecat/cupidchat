@@ -153,12 +153,18 @@ void ui_redraw_rooms(ui_state_t *ui, const cli_model_t *m) {
         if (room) {
             const cli_room_t *r = &m->rooms[index];
             char marker = !r->joined ? '+' : r->owner_uid && r->owner_uid == m->user_id ? '~' : '#';
-            snprintf(label, sizeof(label), "%c%.64s%s", marker, r->name, r->unread ? " *" : "");
+            if (r->unread)
+                snprintf(label, sizeof(label), "%c(%d) %.64s", marker, r->unread, r->name);
+            else
+                snprintf(label, sizeof(label), "%c%.64s", marker, r->name);
             if (!r->joined)
                 wattron(w, A_DIM);
         } else {
             const cli_dm_t *d = &m->dms[index - m->room_count];
-            snprintf(label, sizeof(label), "@%.32s%s", d->peer_nick, d->unread ? " *" : "");
+            if (d->unread)
+                snprintf(label, sizeof(label), "@(%d) %.32s", d->unread, d->peer_nick);
+            else
+                snprintf(label, sizeof(label), "@%.32s", d->peer_nick);
         }
         if (active)
             wattron(w, A_BOLD | COLOR_PAIR(CP_ROOM));
@@ -352,6 +358,8 @@ void ui_redraw_users(ui_state_t *ui, const cli_model_t *m) {
         bool is_self = strcmp(m->users[i].nick, m->nick) == 0;
         if (is_self)
             wattron(w, COLOR_PAIR(CP_SELF));
+        if (m->active_room >= 0 && strcmp(m->users_room, m->rooms[m->active_room].name))
+            break;
         mvwaddnstr(w, row++, 2, m->users[i].nick, ui->layout.users_w - 3);
         if (is_self)
             wattroff(w, COLOR_PAIR(CP_SELF));
@@ -402,6 +410,11 @@ static const char *HELP_LINES[] = {"  ACCOUNT",
                                    "  MESSAGES",
                                    "  /me      <action>         Emote (* you wave)",
                                    "  /dm      <nick> <message> Send a direct message",
+                                   "  /msg     <nick> <message> IRC alias for /dm",
+                                   "  /query   <nick>           Open a DM without sending",
+                                   "  /reply   <message>        Reply to the last incoming DM",
+                                   "  /unread or F5             Next unread conversation",
+                                   "  /clear                    Clear the local chat buffer",
                                    "  /closedm [nick]           Close a DM conversation",
                                    "  /away    [message]        Set away with optional message",
                                    "  /back                     Return from away",
@@ -417,6 +430,8 @@ static const char *HELP_LINES[] = {"  ACCOUNT",
                                    "  /quit                     Exit CupidChat",
                                    "",
                                    "  F1 help, F3/Ctrl+W close chat, F4 latest",
+                                   "  Tab completes nicknames while typing",
+                                   "  /part = /leave, /list = /rooms, /names = /users",
                                    "  F10/Ctrl+Q quit, mouse wheel scrolls chat",
                                    "  Up/Down scroll help; Esc closes it",
                                    NULL};

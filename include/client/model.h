@@ -60,6 +60,9 @@ typedef struct {
     int dm_count, active_dm;
     cli_user_t users[CLI_MAX_USERS];
     int user_count;
+    char users_room[CLI_ROOM_MAX], pending_query[CLI_NICK_MAX];
+    char last_dm_nick[CLI_NICK_MAX];
+    uint32_t last_dm_uid;
     char status_msg[256];
     time_t status_msg_until;
     char ignore_list[32][CLI_NICK_MAX];

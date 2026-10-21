@@ -143,8 +143,11 @@ bool model_is_ignored(const cli_model_t *m, const char *nick) {
 
 cli_dm_t *model_get_or_create_dm(cli_model_t *m, uint32_t uid, const char *nick) {
     for (int i = 0; i < m->dm_count; i++)
-        if (m->dms[i].peer_uid == uid)
+        if (m->dms[i].peer_uid == uid) {
+            if (strcmp(m->dms[i].peer_nick, nick))
+                snprintf(m->dms[i].peer_nick, sizeof(m->dms[i].peer_nick), "%s", nick);
             return &m->dms[i];
+        }
 
     if (m->dm_count >= 64)
         return NULL;
@@ -204,7 +207,7 @@ void model_set_status(cli_model_t *m, const char *msg, int secs) {
 /* User list */
 
 void model_update_users(cli_model_t *m, const char *room, cli_user_t *users, int count) {
-    (void)room; /* for now update the flat global user list */
+    snprintf(m->users_room, sizeof(m->users_room), "%s", room);
     int n = count < CLI_MAX_USERS ? count : CLI_MAX_USERS;
     memcpy(m->users, users, (size_t)n * sizeof(cli_user_t));
     m->user_count = n;

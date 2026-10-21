@@ -411,6 +411,7 @@ static int handle_list_users(conn_t *c, const frame_t *f, server_state_t *s) {
 
     tlv_builder_t b;
     tlv_builder_init(&b);
+    tlv_put_str(&b, TAG_ROOM, room_name);
 
     if (*room_name) {
         int ri = server_find_room(s, room_name);

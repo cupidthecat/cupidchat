@@ -59,7 +59,12 @@ policy. They connect with:
 
 For clients, install `libncurses-dev` and `python3` as well, then run
 `make SAN= cupid-chat`. Notification sounds optionally use `alsa-utils`.
-Windows users can run the Linux client through WSL.
+Windows users can run the Linux client through WSL. WSLg audio uses `paplay`
+from `pulseaudio-utils`; `/sound status` reports audio availability.
+
+Update the server with the client for `/query` and room-scoped user lists.
+User-list responses include the room name so a delayed response cannot replace
+the sidebar for a different room. Older clients ignore the extra field.
 
 ## Data and operations
 
