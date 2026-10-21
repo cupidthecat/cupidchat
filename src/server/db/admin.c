@@ -113,7 +113,7 @@ int db_control_account(cupid_db_t *db, uint64_t actor, uint64_t target, const ch
     sqlite3_bind_int64(q, 2, (sqlite3_int64)target);
     sqlite3_bind_text(q, 3, action, -1, SQLITE_STATIC);
     sqlite3_bind_text(q, 4, reason, -1, SQLITE_STATIC);
-    sqlite3_bind_int64(q, 5, (sqlite3_int64)time(NULL));
+    sqlite3_bind_int64(q, 5, (sqlite3_int64)time(NULL) * 1000);
     if (sqlite3_step(q) == SQLITE_DONE)
         result = 0;
 done:

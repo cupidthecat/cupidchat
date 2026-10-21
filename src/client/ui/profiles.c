@@ -239,7 +239,7 @@ void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
                  : p->presence == 2 ? "away"
                                     : "online",
                  p->nick[0] ? " | @" : "", p->nick);
-        time_t joined = (time_t)p->member_since;
+        time_t joined = (time_t)(p->member_since / 1000);
         struct tm date;
         char since[32] = "unknown";
         if (joined && localtime_r(&joined, &date))

@@ -29,7 +29,7 @@ def main():
             )
             connection.execute(
                 'INSERT INTO admin_actions(actor_id,target_id,action,reason,created_at) '
-                'VALUES(0,?,?,?,?)', (account, 'grant', 'Local server operator', int(time.time()))
+                'VALUES(0,?,?,?,?)', (account, 'grant', 'Local server operator', int(time.time() * 1000))
             )
         connection.commit()
         print('Admins:', ', '.join(name for _, name in accounts))

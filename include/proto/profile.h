@@ -24,7 +24,7 @@ typedef struct {
     profile_fields_t fields;
     char account[MAX_NICK_LEN + 1], nick[MAX_NICK_LEN + 1], away_msg[256];
     uint32_t user_id;
-    uint64_t member_since;
+    uint64_t member_since; /* Unix milliseconds, matching users.created_at. */
     uint8_t presence;
     bool is_account, is_self, is_admin;
 } profile_info_t;
