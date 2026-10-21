@@ -12,37 +12,37 @@
  * kernel without an explicit waitpid() on the hot path.
  */
 
+#include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include <fcntl.h>
-#include <sys/wait.h>
+#include <sys/syscall.h> /* SYS_memfd_create (Linux ≥ 3.17) */
 #include <sys/types.h>
-#include <sys/syscall.h>    /* SYS_memfd_create (Linux ≥ 3.17) */
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "client/sound.h"
 #include "client/sounds_data.h"
 
 /* State */
 
-static int g_enabled = 1;   /* cleared to 0 if aplay is absent */
+static int g_enabled = 1; /* cleared to 0 if aplay is absent */
 
 /* Map sound_id_t -> embedded blob. */
 static const struct {
     const uint8_t *data;
-    size_t         size;
+    size_t size;
 } SOUNDS[] = {
-    [SND_WELCOME]   = { snd_welcome_data,   snd_welcome_size   },
-    [SND_GOODBYE]   = { snd_goodbye_data,   snd_goodbye_size   },
-    [SND_DM]        = { snd_dm_data,        snd_dm_size        },
-    [SND_IM]        = { snd_im_data,        snd_im_size        },
-    [SND_BUDDY_IN]  = { snd_buddy_in_data,  snd_buddy_in_size  },
-    [SND_BUDDY_OUT] = { snd_buddy_out_data, snd_buddy_out_size },
+    [SND_WELCOME] = {snd_welcome_data, snd_welcome_size},
+    [SND_GOODBYE] = {snd_goodbye_data, snd_goodbye_size},
+    [SND_DM] = {snd_dm_data, snd_dm_size},
+    [SND_IM] = {snd_im_data, snd_im_size},
+    [SND_BUDDY_IN] = {snd_buddy_in_data, snd_buddy_in_size},
+    [SND_BUDDY_OUT] = {snd_buddy_out_data, snd_buddy_out_size},
 };
 
-#define N_SOUNDS  ((int)(sizeof(SOUNDS) / sizeof(SOUNDS[0])))
+#define N_SOUNDS ((int)(sizeof(SOUNDS) / sizeof(SOUNDS[0])))
 
 /* Helpers */
 
@@ -56,20 +56,24 @@ static const struct {
  * If sync != 0 the parent waits for aplay to exit (used for SND_GOODBYE so
  * the sound completes before process teardown).
  */
-static void play_mem(const uint8_t *data, size_t len, int sync)
-{
-    if (!g_enabled || !data || len == 0) return;
+static void play_mem(const uint8_t *data, size_t len, int sync) {
+    if (!g_enabled || !data || len == 0)
+        return;
 
     /* Anonymous in-memory file -  no O_CLOEXEC so the fd is inherited by
      * the child and survives execl(). */
     int mfd = (int)syscall(SYS_memfd_create, "snd", 0U);
-    if (mfd < 0) return;
+    if (mfd < 0)
+        return;
 
     /* Write the WAV bytes into the memfd. */
     size_t written = 0;
     while (written < len) {
         ssize_t n = write(mfd, data + written, len - written);
-        if (n <= 0) { close(mfd); return; }
+        if (n <= 0) {
+            close(mfd);
+            return;
+        }
         written += (size_t)n;
     }
 
@@ -79,7 +83,10 @@ static void play_mem(const uint8_t *data, size_t len, int sync)
     snprintf(path, sizeof(path), "/proc/self/fd/%d", mfd);
 
     pid_t pid = fork();
-    if (pid < 0) { close(mfd); return; }
+    if (pid < 0) {
+        close(mfd);
+        return;
+    }
 
     if (pid == 0) {
         /* child: silence aplay output so ncurses is not disturbed. */
@@ -106,8 +113,7 @@ static void play_mem(const uint8_t *data, size_t len, int sync)
 
 /* Public API */
 
-void sound_init(const char *sounds_dir)
-{
+void sound_init(const char *sounds_dir) {
     /* sounds_dir is accepted for API compatibility but ignored -  all WAV
      * data is compiled into the binary via sounds_data.c. */
     (void)sounds_dir;
@@ -123,16 +129,18 @@ void sound_init(const char *sounds_dir)
         g_enabled = 0;
 }
 
-void sound_play(sound_id_t id)
-{
-    if (!g_enabled) return;
-    if (id < 0 || id >= N_SOUNDS) return;
+void sound_play(sound_id_t id) {
+    if (!g_enabled)
+        return;
+    if (id < 0 || id >= N_SOUNDS)
+        return;
     play_mem(SOUNDS[id].data, SOUNDS[id].size, 0 /* async */);
 }
 
-void sound_play_sync(sound_id_t id)
-{
-    if (!g_enabled) return;
-    if (id < 0 || id >= N_SOUNDS) return;
+void sound_play_sync(sound_id_t id) {
+    if (!g_enabled)
+        return;
+    if (id < 0 || id >= N_SOUNDS)
+        return;
     play_mem(SOUNDS[id].data, SOUNDS[id].size, 1 /* sync */);
 }

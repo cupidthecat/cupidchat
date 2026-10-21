@@ -1,9 +1,9 @@
 /* CupidChat public interface. */
 #pragma once
+#include "proto/types.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "proto/types.h"
 
 #define DEFAULT_HOST "0.0.0.0"
 #define DEFAULT_PORT_PLAIN 5555

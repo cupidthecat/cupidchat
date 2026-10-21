@@ -5,6 +5,15 @@ on:
   pull_request:
 
 jobs:
+  formatting:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format-18
+      - name: Check C sources and headers
+        run: git ls-files -z '*.c' '*.h' | xargs -0 clang-format-18 --dry-run --Werror
+
   linux:
     runs-on: ubuntu-24.04
     strategy:

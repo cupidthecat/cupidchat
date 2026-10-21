@@ -8,15 +8,15 @@
  * and the slow-client error frame builder used before disconnecting.
  */
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 
+#include "proto/tlv.h"
+#include "proto/types.h"
 #include "server/backpressure.h"
 #include "server/conn.h"
 #include "server/log.h"
-#include "proto/tlv.h"
-#include "proto/types.h"
 
 /*
  * Returns true when the connection's output queue is so full that it
@@ -33,13 +33,13 @@ bool bp_should_disconnect(const conn_t *c, const server_config_t *cfg) {
  */
 void bp_send_slow_client_error(conn_t *c, const server_config_t *cfg) {
     tlv_builder_t b;
-    if (tlv_builder_init(&b) < 0) return;
+    if (tlv_builder_init(&b) < 0)
+        return;
     tlv_put_u16(&b, TAG_ERROR_CODE, ERR_SLOW_CLIENT);
-    tlv_put_str(&b, TAG_ERROR_MSG,  "client too slow -  disconnecting");
+    tlv_put_str(&b, TAG_ERROR_MSG, "client too slow -  disconnecting");
     uint32_t plen;
     uint8_t *payload = tlv_builder_take(&b, &plen);
-    conn_send_frame(c, SMSG_ERROR, FRAME_FLAG_PRIORITY_HIGH,
-                    0, payload, plen, cfg);
+    conn_send_frame(c, SMSG_ERROR, FRAME_FLAG_PRIORITY_HIGH, 0, payload, plen, cfg);
     free(payload);
     LOG_WARN("fd=%d nick=%s disconnecting slow client", c->fd, c->nick);
 }

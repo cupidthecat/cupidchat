@@ -8,15 +8,17 @@
  * compiled instead.
  */
 
-#include <stdio.h>
-#include <stdbool.h>
 #include "net/transport.h"
+#include <stdbool.h>
+#include <stdio.h>
 
-transport_t *transport_tls_new(int fd, bool server_role,
-                               const char *cert, const char *key,
+transport_t *transport_tls_new(int fd, bool server_role, const char *cert, const char *key,
                                const char *ca_bundle) {
-    (void)fd; (void)server_role; (void)cert; (void)key; (void)ca_bundle;
-    fprintf(stderr,
-        "[transport] TLS requested but not compiled in (rebuild with TLS=1)\n");
+    (void)fd;
+    (void)server_role;
+    (void)cert;
+    (void)key;
+    (void)ca_bundle;
+    fprintf(stderr, "[transport] TLS requested but not compiled in (rebuild with TLS=1)\n");
     return NULL;
 }
