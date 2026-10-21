@@ -5,16 +5,22 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+typedef struct client_output client_output_t;
+
 typedef struct {
     int fd;
     uint32_t seq;
     transport_t *transport;
     frame_parser_t parser;
     bool connected;
+    bool send_failed;
+    client_output_t *output_head, *output_tail;
+    size_t output_bytes;
 } client_conn_t;
 
 int client_connect(client_conn_t *cc, const char *host, uint16_t port, bool use_tls);
 void client_disconnect(client_conn_t *cc);
+int client_flush(client_conn_t *cc);
 int client_send_frame(client_conn_t *cc, uint16_t type, const uint8_t *payload, uint32_t plen);
 int client_send_hello(client_conn_t *cc, const char *nick);
 int client_send_nick(client_conn_t *cc, const char *nick);
