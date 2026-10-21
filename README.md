@@ -17,6 +17,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 
 - ncurses TUI: room sidebar, topic bar, chat pane, status bar, user list
 - Rooms and direct messages (DMs) with separate scroll state per conversation
+- Nonblocking outgoing queue capped at 256 KiB, with partial-write handling
 - Typing indicators, nick-mention highlights, away status
 - Per-nick color assignment, IRC-style `/me` actions, date separators
 - Command history (Up/Down), sidebar navigation (Tab / arrow keys)

@@ -1124,6 +1124,8 @@ int main(int argc, char **argv) {
     if (cfg.sound_test)
         return sound_diagnose() == 0 ? 0 : 1;
 
+    signal(SIGPIPE, SIG_IGN);
+
     /* connect */
     client_conn_t cc;
     fprintf(stderr, "Connecting to %s:%u...\n", cfg.host, cfg.port);
@@ -1153,8 +1155,6 @@ int main(int argc, char **argv) {
     signal(SIGWINCH, on_sigwinch);
     signal(SIGINT, on_sigint);
     signal(SIGTERM, on_sigint);
-    signal(SIGPIPE, SIG_IGN);
-
     time_t last_users_refresh = 0;
     time_t last_typing_sent = 0; /* throttle CMSG_TYPING to once per 2s */
     time_t last_rooms_refresh = 0;
@@ -1164,6 +1164,14 @@ int main(int argc, char **argv) {
     char input_line[4096];
 
     while (!g_quit) {
+        if (cc.send_failed) {
+            model_set_status(&model, "Send failed or outgoing queue full; reconnect to continue",
+                             999);
+            model.status = CLI_DISCONNECTED;
+            ui_redraw(&ui, &model);
+            sleep(2);
+            break;
+        }
         if (g_sigwinch) {
             g_sigwinch = 0;
             ui_resize(&ui);
@@ -1172,7 +1180,7 @@ int main(int argc, char **argv) {
         if (ui.dirty)
             ui_redraw(&ui, &model);
 
-        struct pollfd pfd = {.fd = cc.fd, .events = POLLIN};
+        struct pollfd pfd = {.fd = cc.fd, .events = POLLIN | (cc.output_head ? POLLOUT : 0)};
         int pr = poll(&pfd, 1, 50); /* 50ms timeout for keyboard */
 
         if (pr < 0) {
@@ -1192,6 +1200,9 @@ int main(int argc, char **argv) {
             sleep(2);
             break;
         }
+
+        if ((pfd.revents & POLLOUT) && client_flush(&cc) < 0)
+            continue;
 
         if (pfd.revents & POLLIN) {
             int rr = client_read_frames(&cc, on_frame, &fctx);
