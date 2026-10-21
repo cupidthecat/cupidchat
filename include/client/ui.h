@@ -17,6 +17,7 @@ enum {
     UI_SCROLL,
     UI_CLOSE,
     UI_LATEST,
+    UI_NEXT_UNREAD,
     UI_QUIT
 };
 

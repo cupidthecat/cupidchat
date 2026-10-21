@@ -162,6 +162,11 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 |---------|-------------|
 | `/me <text>` | Send an action message (* nick text) |
 | `/dm <nick> <message>` | Send a direct message |
+| `/msg <nick> <message>` | IRC alias for `/dm` |
+| `/query <nick>` | Open a DM with an online user without sending a message |
+| `/reply <message>` or `/r <message>` | Reply to the last incoming DM |
+| `/unread` | Jump to the next conversation with unread messages |
+| `/clear` | Clear this conversation's local buffer; server history remains |
 | `/closedm <nick>` | Remove a DM from the sidebar |
 | `/close` | Close the active DM or leave the active room |
 | `/latest` | Return the active chat to its newest messages |
@@ -212,7 +217,7 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message; if input is empty, confirm sidebar selection |
-| `Tab` / `Shift+Tab` | Move sidebar cursor down/up |
+| `Tab` / `Shift+Tab` | Navigate the sidebar when input is empty; Tab completes nicknames while typing |
 | `Up` / `Down` | Sidebar navigation (when input empty) or command history (when typing) |
 | `PgUp` / `PgDn` | Scroll chat pane |
 | `Ctrl+A` / `Home` | Move cursor to start of input |
@@ -225,6 +230,7 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | `F2` | Open the emoji picker |
 | `F3` / `Ctrl+W` | Close the active chat |
 | `F4` | Return to the newest messages |
+| `F5` | Jump to the next unread chat |
 | `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
 | `Ctrl+L` | Redraw the terminal |
 
@@ -237,6 +243,16 @@ Each room and DM retains up to 500 messages during the session. Page Up,
 Page Down, and the mouse wheel move through wrapped lines. New messages
 keep your place while you read older history. F4 or `/latest` returns to
 live chat. This buffer is separate from the history replay sent by the server.
+
+Unread counts appear before chat names in the sidebar. F5 or `/unread` visits
+the next unread room or DM. `/query <nick>` opens a conversation without sending
+an initial message; `/reply <message>` answers the last person who sent you a DM.
+
+IRC aliases include `/msg`, `/part`, `/list`, `/names`, `/j`, and `/r`. You can
+join a channel as `/join #general` or `/join general`. Tab completes a unique
+nickname from the current room or DM; ambiguous matches extend to their common
+prefix. Login and registration commands are excluded from input history and
+nickname completion.
 
 The user sidebar hides below 100 columns; the chat sidebar hides below 60.
 Below 40 columns or 8 rows, a resize notice replaces the panes. Your draft,

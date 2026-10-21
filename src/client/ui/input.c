@@ -10,7 +10,10 @@
 #include "client/history.h"
 #include "client/text.h"
 #include "client/ui.h"
+#include <ctype.h>
 #include <limits.h>
+#include <stdio.h>
+#include <strings.h>
 #include <wchar.h>
 #include <wctype.h>
 
@@ -71,6 +74,10 @@ int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
 static void hist_push(ui_state_t *ui, const char *line) {
     if (!line || !*line)
         return;
+    if (!strncmp(line, "/login ", 7) || !strncmp(line, "/register ", 10)) {
+        ui->hist_idx = -1;
+        return;
+    }
     if (ui->hist_count > 0 && strcmp(ui->hist[ui->hist_count - 1], line) == 0)
         return;
 
@@ -101,6 +108,54 @@ static void insert_text(ui_state_t *ui, const char *text) {
     ui->input_len += length;
     ui->input_cursor += length;
     ui->dirty = true;
+}
+
+/* Complete only an unambiguous prefix; an ambiguous match extends to the
+ * common prefix. Empty-input Tab keeps navigating the chat sidebar. */
+static void complete_nick(ui_state_t *ui, const cli_model_t *m) {
+    if (!strncmp(ui->input_buf, "/login ", 7) || !strncmp(ui->input_buf, "/register ", 10) ||
+        (ui->input_buf[ui->input_cursor] && ui->input_buf[ui->input_cursor] != ' '))
+        return;
+    int start = ui->input_cursor;
+    while (start > 0 && ui->input_buf[start - 1] != ' ')
+        start--;
+    int length = ui->input_cursor - start;
+    if (!length)
+        return;
+    char match[CLI_NICK_MAX] = {0};
+    int matches = 0, common = 0;
+    bool room_matches =
+        m->active_room >= 0 && !strcmp(m->rooms[m->active_room].name, m->users_room);
+    int count = room_matches ? m->user_count : m->active_dm >= 0 ? 1 : 0;
+    for (int i = 0; i < count; i++) {
+        const char *nick = room_matches ? m->users[i].nick : m->dms[m->active_dm].peer_nick;
+        if (strncasecmp(nick, ui->input_buf + start, (size_t)length))
+            continue;
+        if (!matches) {
+            snprintf(match, sizeof(match), "%s", nick);
+            common = (int)strlen(match);
+        } else {
+            int j = 0;
+            while (j < common && nick[j] &&
+                   tolower((unsigned char)match[j]) == tolower((unsigned char)nick[j]))
+                j++;
+            common = j;
+        }
+        matches++;
+    }
+    if (!matches || common < length)
+        return;
+    char suffix[CLI_NICK_MAX + 3];
+    snprintf(suffix, sizeof(suffix), "%.*s%s", common, match,
+             matches == 1 && (ui->input_buf[ui->input_cursor] == '\0') ? (start == 0 ? ": " : " ")
+                                                                       : "");
+    if (ui->input_len - length + (int)strlen(suffix) >= (int)sizeof(ui->input_buf))
+        return;
+    memmove(ui->input_buf + start, ui->input_buf + ui->input_cursor,
+            (size_t)(ui->input_len - ui->input_cursor + 1));
+    ui->input_len -= length;
+    ui->input_cursor = start;
+    insert_text(ui, suffix);
 }
 
 /* Main tick */
@@ -173,6 +228,8 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return UI_CLOSE;
     if (ch == KEY_F(4))
         return UI_LATEST;
+    if (ch == KEY_F(5))
+        return UI_NEXT_UNREAD;
     if (ch == KEY_MOUSE) {
         MEVENT event;
         if (getmouse(&event) != OK)
@@ -318,7 +375,10 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
 
         /* Tab / Shift-Tab: sidebar nav always */
         case '\t':
-            ui->nav_cursor++;
+            if (ui->input_len)
+                complete_nick(ui, m);
+            else
+                ui->nav_cursor++;
             ui->dirty = true;
             break;
 
