@@ -29,6 +29,20 @@
 
 /* Connect */
 
+struct client_output {
+    uint8_t *data;
+    size_t length, sent;
+    client_output_t *next;
+};
+
+#define CLIENT_OUTPUT_LIMIT (256u * 1024u)
+
+static void free_output(client_output_t *output) {
+    explicit_bzero(output->data, output->length);
+    free(output->data);
+    free(output);
+}
+
 int client_connect(client_conn_t *cc, const char *host, uint16_t port, bool use_tls) {
     memset(cc, 0, sizeof(*cc));
     cc->fd = -1;
@@ -113,6 +127,8 @@ int client_connect(client_conn_t *cc, const char *host, uint16_t port, bool use_
 
     if (frame_parser_init(&cc->parser) < 0) {
         transport_free(t);
+        cc->transport = NULL;
+        cc->connected = false;
         cc->fd = -1;
         return -1;
     }
@@ -124,6 +140,13 @@ void client_disconnect(client_conn_t *cc) {
     if (!cc)
         return;
     frame_parser_free(&cc->parser);
+    while (cc->output_head) {
+        client_output_t *next = cc->output_head->next;
+        free_output(cc->output_head);
+        cc->output_head = next;
+    }
+    cc->output_tail = NULL;
+    cc->output_bytes = 0;
     if (cc->transport) {
         transport_free(cc->transport);
         cc->transport = NULL;
@@ -135,24 +158,66 @@ void client_disconnect(client_conn_t *cc) {
 /* Send a frame */
 
 int client_send_frame(client_conn_t *cc, uint16_t type, const uint8_t *payload, uint32_t plen) {
+    if (!cc->connected || cc->send_failed)
+        return -1;
     uint8_t *buf;
     ssize_t blen = frame_encode(type, FRAME_FLAG_PRIORITY_HIGH, cc->seq++, payload, plen, &buf);
-    if (blen < 0)
+    if (blen < 0) {
+        cc->send_failed = true;
         return -1;
+    }
+    if ((size_t)blen > CLIENT_OUTPUT_LIMIT - cc->output_bytes) {
+        explicit_bzero(buf, (size_t)blen);
+        free(buf);
+        cc->send_failed = true;
+        return -1;
+    }
+    client_output_t *output = calloc(1, sizeof(*output));
+    if (!output) {
+        explicit_bzero(buf, (size_t)blen);
+        free(buf);
+        cc->send_failed = true;
+        return -1;
+    }
+    output->data = buf;
+    output->length = (size_t)blen;
+    if (cc->output_tail)
+        cc->output_tail->next = output;
+    else
+        cc->output_head = output;
+    cc->output_tail = output;
+    cc->output_bytes += (size_t)blen;
+    return client_flush(cc);
+}
 
-    /* blocking write loop (client sends are small and infrequent) */
-    size_t sent = 0;
-    while (sent < (size_t)blen) {
-        ssize_t n = cc->transport->write(cc->transport, buf + sent, (size_t)blen - sent);
+int client_flush(client_conn_t *cc) {
+    if (!cc->connected || cc->send_failed)
+        return -1;
+    while (cc->output_head) {
+        client_output_t *output = cc->output_head;
+        ssize_t n = cc->transport->write(cc->transport, output->data + output->sent,
+                                         output->length - output->sent);
         if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            if (errno == EINTR)
                 continue;
-            free(buf);
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                return 0;
+            cc->send_failed = true;
             return -1;
         }
-        sent += (size_t)n;
+        if (!n) {
+            cc->send_failed = true;
+            return -1;
+        }
+        output->sent += (size_t)n;
+        if (output->sent == output->length) {
+            cc->output_head = output->next;
+            if (!cc->output_head)
+                cc->output_tail = NULL;
+            cc->output_bytes -= output->length;
+            free_output(output);
+        }
     }
-    free(buf);
     return 0;
 }
 
