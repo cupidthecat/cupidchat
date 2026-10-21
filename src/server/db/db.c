@@ -31,51 +31,58 @@ struct cupid_db {
 
 /* Schema */
 
-static const char SCHEMA[] = "CREATE TABLE IF NOT EXISTS rooms ("
-                             "  id         INTEGER PRIMARY KEY AUTOINCREMENT,"
-                             "  name       TEXT    NOT NULL UNIQUE,"
-                             "  topic      TEXT    NOT NULL DEFAULT '',"
-                             "  owner_uid  INTEGER NOT NULL DEFAULT 0,"
-                             "  owner_account_id INTEGER REFERENCES users(id),"
-                             "  created_at INTEGER NOT NULL"
-                             ");"
+static const char SCHEMA[] =
+    "CREATE TABLE IF NOT EXISTS rooms ("
+    "  id         INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  name       TEXT    NOT NULL UNIQUE,"
+    "  topic      TEXT    NOT NULL DEFAULT '',"
+    "  owner_uid  INTEGER NOT NULL DEFAULT 0,"
+    "  owner_account_id INTEGER REFERENCES users(id),"
+    "  created_at INTEGER NOT NULL"
+    ");"
 
-                             "CREATE TABLE IF NOT EXISTS messages ("
-                             "  id        INTEGER PRIMARY KEY AUTOINCREMENT,"
-                             "  room_name TEXT    NOT NULL,"
-                             "  user_id   INTEGER NOT NULL,"
-                             "  nick      TEXT    NOT NULL,"
-                             "  text      TEXT    NOT NULL,"
-                             "  ts_ms     INTEGER NOT NULL"
-                             ");"
-                             "CREATE INDEX IF NOT EXISTS idx_messages_room_ts"
-                             "  ON messages(room_name, ts_ms);"
+    "CREATE TABLE IF NOT EXISTS messages ("
+    "  id        INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  room_name TEXT    NOT NULL,"
+    "  user_id   INTEGER NOT NULL,"
+    "  nick      TEXT    NOT NULL,"
+    "  text      TEXT    NOT NULL,"
+    "  ts_ms     INTEGER NOT NULL"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_messages_room_ts"
+    "  ON messages(room_name, ts_ms);"
 
-                             "CREATE TABLE IF NOT EXISTS dms ("
-                             "  id         INTEGER PRIMARY KEY AUTOINCREMENT,"
-                             "  from_uid   INTEGER NOT NULL,"
-                             "  from_nick  TEXT    NOT NULL,"
-                             "  to_uid     INTEGER NOT NULL,"
-                             "  to_nick    TEXT    NOT NULL,"
-                             "  text       TEXT    NOT NULL,"
-                             "  ts_ms      INTEGER NOT NULL"
-                             ");"
-                             "CREATE INDEX IF NOT EXISTS idx_dms_to_uid"
-                             "  ON dms(to_uid, ts_ms);"
+    "CREATE TABLE IF NOT EXISTS dms ("
+    "  id         INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  from_uid   INTEGER NOT NULL,"
+    "  from_nick  TEXT    NOT NULL,"
+    "  to_uid     INTEGER NOT NULL,"
+    "  to_nick    TEXT    NOT NULL,"
+    "  text       TEXT    NOT NULL,"
+    "  ts_ms      INTEGER NOT NULL"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_dms_to_uid"
+    "  ON dms(to_uid, ts_ms);"
 
-                             "CREATE TABLE IF NOT EXISTS users ("
-                             "  id            INTEGER PRIMARY KEY AUTOINCREMENT,"
-                             "  username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,"
-                             "  password_hash TEXT    NOT NULL,"
-                             "  created_at    INTEGER NOT NULL"
-                             ");"
-                             "CREATE INDEX IF NOT EXISTS idx_users_username"
-                             "  ON users(username COLLATE NOCASE);"
-                             "CREATE TABLE IF NOT EXISTS buddies ("
-                             " owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
-                             " buddy_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
-                             " PRIMARY KEY(owner_id, buddy_id), CHECK(owner_id != buddy_id)"
-                             ");";
+    "CREATE TABLE IF NOT EXISTS users ("
+    "  id            INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,"
+    "  password_hash TEXT    NOT NULL,"
+    "  created_at    INTEGER NOT NULL"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_users_username"
+    "  ON users(username COLLATE NOCASE);"
+    "CREATE TABLE IF NOT EXISTS buddies ("
+    " owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+    " buddy_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+    " PRIMARY KEY(owner_id, buddy_id), CHECK(owner_id != buddy_id)"
+    ");"
+    "CREATE TABLE IF NOT EXISTS user_profiles ("
+    " user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,"
+    " display_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',"
+    " bio TEXT NOT NULL DEFAULT '', pronouns TEXT NOT NULL DEFAULT '',"
+    " location TEXT NOT NULL DEFAULT '', website TEXT NOT NULL DEFAULT ''"
+    ");";
 
 /* Rooms that are always present in a fresh installation. */
 static const char *DEFAULT_ROOMS[] = {"general", "random", NULL};
@@ -435,6 +442,70 @@ bool db_register_user(cupid_db_t *db, const char *username, const char *password
 
 bool db_authenticate_user(cupid_db_t *db, const char *username, const char *password) {
     return db_authenticate_account(db, username, password) != 0;
+}
+
+uint64_t db_find_account(cupid_db_t *db, const char *name) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db->handle, "SELECT id FROM users WHERE username=? COLLATE NOCASE", -1,
+                           &stmt, NULL) != SQLITE_OK)
+        return UINT64_MAX;
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    uint64_t account = rc == SQLITE_ROW    ? (uint64_t)sqlite3_column_int64(stmt, 0)
+                       : rc == SQLITE_DONE ? 0
+                                           : UINT64_MAX;
+    sqlite3_finalize(stmt);
+    return account;
+}
+
+int db_get_profile(cupid_db_t *db, uint64_t account, const char *name, profile_info_t *info,
+                   uint64_t *found_account) {
+    const char *by_id = "SELECT u.id,u.username,u.created_at,"
+                        "COALESCE(p.display_name,''),COALESCE(p.status,''),COALESCE(p.bio,''),"
+                        "COALESCE(p.pronouns,''),COALESCE(p.location,''),COALESCE(p.website,'') "
+                        "FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=?";
+    const char *by_name = "SELECT u.id,u.username,u.created_at,"
+                          "COALESCE(p.display_name,''),COALESCE(p.status,''),COALESCE(p.bio,''),"
+                          "COALESCE(p.pronouns,''),COALESCE(p.location,''),COALESCE(p.website,'') "
+                          "FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE "
+                          "u.username=? COLLATE NOCASE";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db->handle, account ? by_id : by_name, -1, &stmt, NULL) != SQLITE_OK)
+        return -1;
+    if (account)
+        sqlite3_bind_int64(stmt, 1, (sqlite3_int64)account);
+    else
+        sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        memset(info, 0, sizeof(*info));
+        *found_account = (uint64_t)sqlite3_column_int64(stmt, 0);
+        snprintf(info->account, sizeof(info->account), "%s", sqlite3_column_text(stmt, 1));
+        info->member_since = (uint64_t)sqlite3_column_int64(stmt, 2);
+        info->is_account = true;
+        for (int i = 0; i < PROFILE_FIELD_COUNT; i++)
+            snprintf(profile_field(&info->fields, i), PROFILE_FIELDS[i].capacity, "%s",
+                     sqlite3_column_text(stmt, 3 + i));
+    }
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW ? 1 : rc == SQLITE_DONE ? 0 : -1;
+}
+
+int db_set_profile(cupid_db_t *db, uint64_t account, const profile_fields_t *fields) {
+    const char *sql =
+        "INSERT INTO user_profiles(user_id,display_name,status,bio,pronouns,location,website) "
+        "VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+        "display_name=excluded.display_name,status=excluded.status,bio=excluded.bio,"
+        "pronouns=excluded.pronouns,location=excluded.location,website=excluded.website";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
+        return -1;
+    sqlite3_bind_int64(stmt, 1, (sqlite3_int64)account);
+    for (int i = 0; i < PROFILE_FIELD_COUNT; i++)
+        sqlite3_bind_text(stmt, i + 2, profile_field_const(fields, i), -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? 0 : -1;
 }
 
 int db_account_name(cupid_db_t *db, uint64_t account, char *name, int capacity) {

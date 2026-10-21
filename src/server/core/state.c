@@ -182,6 +182,8 @@ int server_find_room(server_state_t *s, const char *name) {
 
 int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owner_uid,
                               uint64_t owner_account_id) {
+    if (!owner_account_id)
+        return -1;
     int idx = server_find_room(s, name);
     if (idx >= 0)
         return idx;
@@ -204,7 +206,7 @@ int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owne
     room_t *r = room_create(name, s->cfg->history_size);
     if (!r)
         return -1;
-    r->owner_uid = owner_account_id ? 0 : owner_uid;
+    r->owner_uid = 0;
     r->owner_account_id = owner_account_id;
     if (db_create_room(s->db, name, owner_account_id) < 0) {
         room_destroy(r);
@@ -228,7 +230,7 @@ conn_t *server_find_by_account(server_state_t *s, uint64_t account_id) {
 
 uint32_t server_room_owner_uid(server_state_t *s, const room_t *room) {
     if (!room->owner_account_id)
-        return room->owner_uid;
+        return 0;
     conn_t *owner = server_find_by_account(s, room->owner_account_id);
     return owner ? owner->user_id : 0;
 }

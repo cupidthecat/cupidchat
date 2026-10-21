@@ -1,5 +1,6 @@
 /* CupidChat public interface. */
 #pragma once
+#include "proto/profile.h"
 #include "proto/types.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -12,7 +13,7 @@
 #define CLI_MAX_USERS 1024
 #define CLI_HISTORY_CAP 500
 
-typedef enum { CLI_DISCONNECTED, CLI_CONNECTING, CLI_ONLINE } cli_status_t;
+typedef enum { CLI_DISCONNECTED, CLI_CONNECTING, CLI_SIGNIN, CLI_ONLINE } cli_status_t;
 
 typedef enum { MSG_CHAT, MSG_ACTION, MSG_JOIN, MSG_PART, MSG_QUIT, MSG_SYSTEM } cli_msg_type_t;
 
@@ -20,7 +21,7 @@ typedef struct {
     uint32_t user_id;
     uint64_t timestamp_ms;
     char nick[CLI_NICK_MAX], base_nick[CLI_NICK_MAX], text[CLI_MSG_MAX];
-    bool is_self, is_dm, is_highlight;
+    bool is_self, is_dm, is_highlight, is_history;
     cli_msg_type_t type;
 } cli_msg_t;
 

@@ -23,16 +23,6 @@
 
 #include "client/sound.h"
 
-/* Generate a default nick like "guest7342" when no --nick is given. */
-static void make_default_nick(char *buf, size_t bufsz) {
-    /* seed from time + pid so two terminals opened at the same second
-     * still get different numbers */
-    unsigned seed = (unsigned)time(NULL) ^ ((unsigned)getpid() << 16);
-    srand(seed);
-    int n = (rand() % 9000) + 1000; /* 1000-9999 */
-    snprintf(buf, bufsz, "guest%d", n);
-}
-
 #include "client/client_config.h"
 #include "client/client_conn.h"
 #include "client/history.h"
@@ -64,7 +54,7 @@ void client_config_usage(const char *prog) {
             "Usage: %s [options]\n"
             "  --host HOST        Server hostname (default: 127.0.0.1)\n"
             "  --port PORT        Server port    (default: 5555)\n"
-            "  --nick NICK        Your nickname  (default: guest)\n"
+            "  --nick NICK        Initial account name (optional)\n"
             "  --tls              Use TLS connection\n"
             "  --verbose          Debug output\n"
             "  --sound-test       Play a sound and show audio errors without connecting\n"
@@ -76,7 +66,6 @@ int client_config_parse(int argc, char **argv, client_config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     strncpy(cfg->host, "127.0.0.1", sizeof(cfg->host) - 1);
     cfg->port = 5555;
-    make_default_nick(cfg->nick, sizeof(cfg->nick));
 
     static const struct option opts[] = {
         {"host", required_argument, NULL, 'H'}, {"port", required_argument, NULL, 'p'},
@@ -94,6 +83,8 @@ int client_config_parse(int argc, char **argv, client_config_t *cfg) {
                 cfg->port = (uint16_t)atoi(optarg);
                 break;
             case 'n':
+                if (strlen(optarg) > MAX_NICK_LEN)
+                    return -1;
                 strncpy(cfg->nick, optarg, sizeof(cfg->nick) - 1);
                 break;
             case 't':
@@ -219,6 +210,71 @@ static void open_buddies(cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
     ui->dirty = true;
 }
 
+static void open_profile(cli_model_t *m, client_conn_t *cc, ui_state_t *ui, bool refresh) {
+    if (!(m->server_caps & CAP_PROFILES)) {
+        model_set_status(m, "This server does not support profiles", 5);
+        ui->dirty = true;
+        return;
+    }
+    char account[33];
+    snprintf(account, sizeof(account), "%s",
+             refresh ? ui->profile.account : ui->profile_target_account);
+    uint32_t uid = refresh ? 0 : ui->profile_target_uid;
+    char nick[33];
+    snprintf(nick, sizeof(nick), "%s", refresh ? "" : ui->profile_target_nick);
+    ui->show_buddies_modal = false;
+    ui->show_profile = ui->profile_loading = ui->dirty = true;
+    ui->profile_editing = ui->profile_saving = ui->profile_discard = false;
+    ui->profile_focus = ui->profile_offset = 0;
+    ui->profile_error[0] = '\0';
+    memset(&ui->profile, 0, sizeof(ui->profile));
+    explicit_bzero(&ui->profile_draft, sizeof(ui->profile_draft));
+    if (++ui->profile_request == 0)
+        ui->profile_request++;
+    if (client_get_profile(cc, ui->profile_request, uid, account, nick) < 0) {
+        ui->profile_loading = false;
+        snprintf(ui->profile_error, sizeof(ui->profile_error), "Could not request profile");
+    }
+}
+
+static void enter_chat(frame_ctx_t *ctx) {
+    cli_model_t *m = ctx->model;
+    client_conn_t *cc = ctx->conn;
+    ctx->ui->show_auth = false;
+    ctx->ui->auth_pending = false;
+    ui_auth_clear_secrets(ctx->ui);
+    m->status = CLI_ONLINE;
+    sound_play(SND_WELCOME);
+    /* clear any stale history before auto-join */
+    model_clear_room_msgs(m, "general");
+    /* push ASCII art MOTD lines as system messages into #general */
+    if (m->motd[0]) {
+        uint64_t motd_ts = (uint64_t)time(NULL) * 1000;
+        char motd_copy[2048];
+        snprintf(motd_copy, sizeof(motd_copy), "%.2047s", m->motd);
+        char *saveptr = NULL;
+        char *line = strtok_r(motd_copy, "\n", &saveptr);
+        while (line) {
+            model_push_system_msg(m, "general", line, motd_ts, MSG_SYSTEM);
+            motd_ts += 1; /* keep them in order */
+            line = strtok_r(NULL, "\n", &saveptr);
+        }
+    }
+    /* fetch room list and auto-join default room */
+    client_send_list_rooms(cc);
+    client_send_join(cc, "general");
+    /* optimistically track the join in the model */
+    cli_room_t *gr = model_get_or_create_room(m, "general");
+    if (gr) {
+        gr->joined = true;
+        m->active_room = (int)(gr - m->rooms);
+        m->active_dm = -1;
+    }
+    client_send_list_users(cc, "general");
+    ctx->ui->nav_cursor = (m->active_room >= 0) ? m->active_room : 0;
+    model_set_status(m, "Connected", 8);
+}
+
 static void on_frame(const frame_t *f, void *ctx_ptr) {
     frame_ctx_t *ctx = ctx_ptr;
     cli_model_t *m = ctx->model;
@@ -236,36 +292,10 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             m->session_id = sid;
             tlv_read_u32(p, pl, TAG_CAPS, &m->server_caps);
             m->user_id = sid; /* our own UID for self-message detection */
-            m->status = CLI_ONLINE;
-            sound_play(SND_WELCOME);
-            /* clear any stale history before auto-join */
-            model_clear_room_msgs(m, "general");
-            /* push ASCII art MOTD lines as system messages into #general */
-            if (m->motd[0]) {
-                uint64_t motd_ts = (uint64_t)time(NULL) * 1000;
-                char motd_copy[2048];
-                snprintf(motd_copy, sizeof(motd_copy), "%.2047s", m->motd);
-                char *saveptr = NULL;
-                char *line = strtok_r(motd_copy, "\n", &saveptr);
-                while (line) {
-                    model_push_system_msg(m, "general", line, motd_ts, MSG_SYSTEM);
-                    motd_ts += 1; /* keep them in order */
-                    line = strtok_r(NULL, "\n", &saveptr);
-                }
-            }
-            /* fetch room list and auto-join default room */
-            client_send_list_rooms(cc);
-            client_send_join(cc, "general");
-            /* optimistically track the join in the model */
-            cli_room_t *gr = model_get_or_create_room(m, "general");
-            if (gr) {
-                gr->joined = true;
-                m->active_room = (int)(gr - m->rooms);
-                m->active_dm = -1;
-            }
-            client_send_list_users(cc, "general");
-            ctx->ui->nav_cursor = (m->active_room >= 0) ? m->active_room : 0;
-            model_set_status(m, "Connected", 8);
+            m->status = CLI_SIGNIN;
+            ctx->ui->show_auth = true;
+            ctx->ui->auth_pending = false;
+            model_set_status(m, "Create an account or log in to chat", 999);
             ctx->ui->dirty = true;
             break;
         }
@@ -275,9 +305,58 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             char msg[256] = {0};
             tlv_read_u16(p, pl, TAG_ERROR_CODE, &code);
             tlv_read_str(p, pl, TAG_ERROR_MSG, msg, sizeof(msg));
+            uint32_t request = 0;
+            if (tlv_read_u32(p, pl, TAG_REQUEST_ID, &request)) {
+                if (ctx->ui->show_profile && request == ctx->ui->profile_request) {
+                    ctx->ui->profile_loading = ctx->ui->profile_saving = false;
+                    snprintf(ctx->ui->profile_error, sizeof(ctx->ui->profile_error), "%.191s", msg);
+                }
+            }
+            if (ctx->ui->show_auth) {
+                ctx->ui->auth_pending = false;
+                snprintf(ctx->ui->auth_error, sizeof(ctx->ui->auth_error), "%.191s", msg);
+                ui_auth_clear_secrets(ctx->ui);
+                ctx->ui->auth_focus = 1;
+            }
             model_set_status(m, msg, 5);
             sound_play(SND_ERROR);
             ctx->ui->dirty = true;
+            break;
+        }
+
+        case SMSG_PROFILE:
+        case SMSG_PROFILE_SAVED: {
+            ui_state_t *ui = ctx->ui;
+            uint32_t request = 0;
+            tlv_read_u32(p, pl, TAG_REQUEST_ID, &request);
+            if (!ui->show_profile || request != ui->profile_request)
+                break;
+            profile_info_t info = {0};
+            if (profile_fields_read(p, pl, &info.fields) < 0) {
+                ui->profile_loading = ui->profile_saving = false;
+                snprintf(ui->profile_error, sizeof(ui->profile_error), "Invalid profile response");
+                ui->dirty = true;
+                break;
+            }
+            tlv_read_str(p, pl, TAG_BASE_NICK, info.account, sizeof(info.account));
+            tlv_read_str(p, pl, TAG_NICK, info.nick, sizeof(info.nick));
+            tlv_read_str(p, pl, TAG_AWAY_MSG, info.away_msg, sizeof(info.away_msg));
+            tlv_read_u32(p, pl, TAG_USER_ID, &info.user_id);
+            tlv_read_u64(p, pl, TAG_MEMBER_SINCE, &info.member_since);
+            tlv_read_u8(p, pl, TAG_PRESENCE, &info.presence);
+            uint8_t self = 0;
+            tlv_read_u8(p, pl, TAG_IS_SELF, &self);
+            info.is_self = self != 0;
+            info.is_account = true;
+            ui->profile = info;
+            ui->profile_loading = ui->profile_saving = ui->profile_editing = false;
+            explicit_bzero(&ui->profile_draft, sizeof(ui->profile_draft));
+            ui->profile_focus = ui->profile_offset = 0;
+            snprintf(ui->profile_error, sizeof(ui->profile_error), "%s",
+                     f->hdr.type == SMSG_PROFILE_SAVED ? "Profile saved" : "");
+            if (f->hdr.type == SMSG_PROFILE_SAVED)
+                sound_play(SND_PROFILE_SAVED);
+            ui->dirty = true;
             break;
         }
 
@@ -300,7 +379,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_str(p, pl, TAG_BASE_NICK, base_nick, sizeof(base_nick));
             if (!ts)
                 ts = (uint64_t)time(NULL) * 1000;
-            bool self = (uid == m->user_id);
+            bool self = f->hdr.type != SMSG_ROOM_HISTORY && uid == m->user_id;
             /* use our own base_nick for self-echo messages */
             const char *bn = self ? m->base_nick : base_nick;
             /* Detect CTCP ACTION:  \x01ACTION <text>\x01 */
@@ -321,6 +400,12 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             } else {
                 model_push_room_msg(m, room, uid, nick, bn, text, ts, self, m->nick);
             }
+            cli_room_t *received_room = model_find_room(m, room);
+            if (received_room && received_room->msgs_len)
+                received_room
+                    ->msgs[(received_room->msgs_head + received_room->msgs_cap - 1) %
+                           received_room->msgs_cap]
+                    .is_history = f->hdr.type == SMSG_ROOM_HISTORY;
             /* nick-mention highlight: sound + bell */
             if (f->hdr.type == SMSG_ROOM_MSG && !self && m->nick[0] && !model_is_ignored(m, nick)) {
                 const char *check = (text[0] == '\x01') ? text + 8 : text;
@@ -627,6 +712,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             char sb[80];
             snprintf(sb, sizeof(sb), "Registered & logged in as %.32s", new_nick);
             model_set_status(m, sb, 8);
+            enter_chat(ctx);
             client_send_list_rooms(cc);
             ctx->ui->dirty = true;
             break;
@@ -645,23 +731,47 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             char sb[80];
             snprintf(sb, sizeof(sb), "Logged in as %.32s", new_nick);
             model_set_status(m, sb, 8);
+            enter_chat(ctx);
             client_send_list_rooms(cc);
             ctx->ui->dirty = true;
             break;
         }
 
         case SMSG_LOGOUT_OK: {
-            m->logged_in = false;
-            m->buddy_count = 0;
-            memset(m->buddies, 0, sizeof(m->buddies));
-            ctx->ui->show_buddies_modal = false;
-            char guest_nick[33] = {0};
-            tlv_read_str(p, pl, TAG_NICK, guest_nick, sizeof(guest_nick));
-            snprintf(m->nick, sizeof(m->nick), "%s", guest_nick);
-            snprintf(m->base_nick, sizeof(m->base_nick), "%s", guest_nick);
-            model_set_status(m, "Logged out - back to guest session", 6);
-            client_send_list_rooms(cc);
-            ctx->ui->dirty = true;
+            uint32_t uid = 0, caps = m->server_caps;
+            char server[128], motd[2048];
+            snprintf(server, sizeof(server), "%s", m->server_name);
+            snprintf(motd, sizeof(motd), "%s", m->motd);
+            tlv_read_u32(p, pl, TAG_USER_ID, &uid);
+            model_free(m);
+            model_init(m);
+            m->status = CLI_SIGNIN;
+            m->server_caps = caps;
+            m->user_id = m->session_id = uid;
+            snprintf(m->server_name, sizeof(m->server_name), "%s", server);
+            snprintf(m->motd, sizeof(m->motd), "%s", motd);
+            ui_state_t *ui = ctx->ui;
+            for (int i = 0; i < ui->hist_count; i++) {
+                explicit_bzero(ui->hist[i], strlen(ui->hist[i]));
+                free(ui->hist[i]);
+                ui->hist[i] = NULL;
+            }
+            ui->hist_count = 0;
+            ui->hist_idx = -1;
+            explicit_bzero(ui->input_buf, sizeof(ui->input_buf));
+            ui->input_len = ui->input_cursor = ui->input_offset = 0;
+            ui->show_buddies_modal = ui->show_help_modal = ui->show_emoji_modal = false;
+            ui->show_auth = true;
+            ui->auth_pending = ui->auth_register = false;
+            ui->show_profile = ui->profile_editing = ui->profile_saving = ui->profile_loading =
+                false;
+            ui->profile_discard = false;
+            memset(&ui->profile, 0, sizeof(ui->profile));
+            explicit_bzero(&ui->profile_draft, sizeof(ui->profile_draft));
+            ui->auth_error[0] = '\0';
+            ui->auth_focus = 0;
+            ui_auth_clear_secrets(ui);
+            ui->dirty = true;
             break;
         }
 
@@ -786,7 +896,17 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
         }
     }
 
-    if (!strcmp(cmd, "buddies") || !strcmp(cmd, "buddy")) {
+    if (!strcmp(cmd, "profile") || !strncmp(cmd, "profile ", 8) || !strncmp(cmd, "whois ", 6)) {
+        const char *name = !strncmp(cmd, "whois ", 6) ? cmd + 6 : cmd[7] ? cmd + 8 : "";
+        while (*name == ' ')
+            name++;
+        if (strlen(name) > MAX_NICK_LEN + (*name == '@') || strchr(name, ' '))
+            model_set_status(m, "Usage: /profile [nick or @account]", 5);
+        else {
+            ui_profile_target(ui, 0, *name == '@' ? NULL : name, *name == '@' ? name + 1 : NULL);
+            open_profile(m, cc, ui, false);
+        }
+    } else if (!strcmp(cmd, "buddies") || !strcmp(cmd, "buddy")) {
         open_buddies(m, cc, ui);
     } else if (!strncmp(cmd, "buddy ", 6)) {
         if (buddies_available(m)) {
@@ -1151,6 +1271,9 @@ int main(int argc, char **argv) {
     /* init UI */
     ui_state_t ui;
     ui_init(&ui);
+    ui.show_auth = true;
+    snprintf(ui.auth_name, sizeof(ui.auth_name), "%s", cfg.nick);
+    ui.auth_cursors[0] = (int)strlen(ui.auth_name);
 
     signal(SIGWINCH, on_sigwinch);
     signal(SIGINT, on_sigint);
@@ -1235,6 +1358,67 @@ int main(int argc, char **argv) {
             if (kr == UI_QUIT) {
                 g_quit = 1;
                 break;
+            }
+            if (kr == UI_PROFILE_OPEN || kr == UI_PROFILE_REFRESH) {
+                open_profile(&model, &cc, &ui, kr == UI_PROFILE_REFRESH);
+                continue;
+            }
+            if (kr == UI_PROFILE_SAVE) {
+                if (ui.profile.is_self && ui.profile_editing && !ui.profile_saving) {
+                    if (++ui.profile_request == 0)
+                        ui.profile_request++;
+                    ui.profile_saving =
+                        client_save_profile(&cc, ui.profile_request, &ui.profile_draft) == 0;
+                    snprintf(ui.profile_error, sizeof(ui.profile_error), "%s",
+                             ui.profile_saving ? "" : "Could not send profile");
+                    ui.dirty = true;
+                }
+                continue;
+            }
+            if (kr == UI_PROFILE_MESSAGE) {
+                if (ui.profile.presence && ui.profile.user_id) {
+                    select_dm(&model, &ui, ui.profile.user_id, ui.profile.nick);
+                    ui.show_profile = false;
+                } else
+                    snprintf(ui.profile_error, sizeof(ui.profile_error), "That account is offline");
+                ui.dirty = true;
+                continue;
+            }
+            if (kr == UI_PROFILE_BUDDY) {
+                if (ui.profile.account[0] && !ui.profile.is_self) {
+                    bool remove = false;
+                    for (int i = 0; i < model.buddy_count; i++)
+                        if (!strcasecmp(model.buddies[i].account, ui.profile.account))
+                            remove = true;
+                    client_send_buddy(&cc, remove ? CMSG_BUDDY_REMOVE : CMSG_BUDDY_ADD,
+                                      ui.profile.account);
+                    snprintf(ui.profile_error, sizeof(ui.profile_error), "Updating buddy list...");
+                }
+                ui.dirty = true;
+                continue;
+            }
+            if (kr == UI_AUTH_SUBMIT) {
+                if (model.status != CLI_SIGNIN || ui.auth_pending)
+                    continue;
+                const char *error = !ui.auth_name[0]       ? "Enter an account name"
+                                    : !ui.auth_password[0] ? "Enter a password"
+                                    : ui.auth_register && strcmp(ui.auth_password, ui.auth_confirm)
+                                        ? "Passwords do not match"
+                                        : NULL;
+                if (error) {
+                    snprintf(ui.auth_error, sizeof(ui.auth_error), "%s", error);
+                    ui.dirty = true;
+                    continue;
+                }
+                int rc = ui.auth_register
+                             ? client_send_register(&cc, ui.auth_name, ui.auth_password)
+                             : client_send_login(&cc, ui.auth_name, ui.auth_password);
+                ui.auth_pending = rc == 0;
+                snprintf(ui.auth_error, sizeof(ui.auth_error), "%s",
+                         rc < 0 ? "Could not send sign-in request" : "");
+                ui_auth_clear_secrets(&ui);
+                ui.dirty = true;
+                continue;
             }
             if (kr == UI_CLOSE) {
                 close_active_chat(&model, &cc, &ui);

@@ -253,6 +253,7 @@ static void render_message_row(WINDOW *w, int row, int width, const cli_msg_t *m
 }
 
 void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
+    ui->name_hit_count = 0;
     WINDOW *w = W(ui, ui->win_chat);
     if (!w)
         return;
@@ -281,6 +282,7 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
     int width = ui->layout.chat_w, height = ui->layout.chat_h - 1;
     if (!buf || len == 0) {
         mvwaddnstr(w, 0, 0, "Select a chat. F1 opens help.", width);
+        draw_text(w, height, 0, m->status_msg[0] ? m->status_msg : "Ready | F7 profile", width);
         wnoutrefresh(w);
         return;
     }
@@ -314,9 +316,21 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
             (msg->type == MSG_CHAT || msg->type == MSG_ACTION) && model_is_ignored(m, msg->nick);
         int rows = history_message_rows(msg, width, ignored);
         int begin = first > logical_row ? first - logical_row : 0;
-        for (int line = begin; line < rows && logical_row + line < last; line++)
+        for (int line = begin; line < rows && logical_row + line < last; line++) {
+            bool grouped = !separator && !prev_ignored && can_group(prev, msg);
+            if (!line && !grouped && !ignored && !msg->is_history && msg->user_id &&
+                (msg->type == MSG_CHAT || msg->type == MSG_ACTION) &&
+                ui->name_hit_count < CLI_HISTORY_CAP) {
+                int hit = ui->name_hit_count++;
+                ui->name_hits[hit].row = 2 + padding + logical_row - first;
+                ui->name_hits[hit].left = ui->layout.rooms_w + 6;
+                ui->name_hits[hit].right = ui->layout.rooms_w + history_prefix_width(msg, width);
+                ui->name_hits[hit].uid = msg->is_self ? m->user_id : msg->user_id;
+                snprintf(ui->name_hits[hit].nick, sizeof(ui->name_hits[hit].nick), "%s", msg->nick);
+            }
             render_message_row(w, padding + logical_row + line - first, width, msg, m->nick, line,
-                               !separator && !prev_ignored && can_group(prev, msg), ignored);
+                               grouped, ignored);
+        }
         logical_row += rows;
         prev = msg;
         prev_ignored = ignored;
@@ -333,7 +347,13 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
             snprintf(status, sizeof(status), " %.32s is typing...", r->typing_nick);
     }
     wattron(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
-    mvwaddnstr(w, height, 0, status, width);
+    char combined[640];
+    if (m->status_msg[0])
+        snprintf(combined, sizeof(combined), "%s | %s", *offset ? status : m->status_msg,
+                 *offset ? m->status_msg : status);
+    else
+        snprintf(combined, sizeof(combined), "%s", status);
+    draw_text(w, height, 0, combined, width);
     wattroff(w, A_DIM | COLOR_PAIR(CP_SYSTEM));
     wnoutrefresh(w);
 }
@@ -354,7 +374,14 @@ void ui_redraw_users(ui_state_t *ui, const cli_model_t *m) {
     mvwaddstr(w, row++, 2, "USERS");
     wattroff(w, A_DIM);
 
-    for (int i = 0; i < m->user_count && row < ui->layout.chat_h; i++) {
+    int maximum = m->user_count - (ui->layout.chat_h - 1);
+    if (maximum < 0)
+        maximum = 0;
+    if (ui->users_offset > maximum)
+        ui->users_offset = maximum;
+    if (ui->users_offset < 0)
+        ui->users_offset = 0;
+    for (int i = ui->users_offset; i < m->user_count && row < ui->layout.chat_h; i++) {
         bool is_self = strcmp(m->users[i].nick, m->nick) == 0;
         if (is_self)
             wattron(w, COLOR_PAIR(CP_SELF));
@@ -396,9 +423,11 @@ void ui_redraw_input(ui_state_t *ui) {
 /* Help modal */
 
 static const char *HELP_LINES[] = {"  ACCOUNT",
+                                   "  F7 /profile [nick/@account]  View or edit profile",
+                                   "  Click users or buddies to view their profile",
                                    "  /register <nick> <pass>   Create account & log in",
                                    "  /login    <nick> <pass>   Log in to existing account",
-                                   "  /logout                   Return to guest session",
+                                   "  /logout                   Return to sign-in screen",
                                    "  /nick    <newnick>        Change your display name",
                                    "",
                                    "  ROOMS  (~name = room you own, deletable)",
@@ -557,7 +586,7 @@ static void ui_redraw_buddies_modal(ui_state_t *ui, const cli_model_t *m) {
     }
     if (m->buddy_count && m->buddies[ui->buddy_cursor].presence == 2)
         draw_text(w, height - 3, 2, m->buddies[ui->buddy_cursor].away_msg, width - 4);
-    draw_text(w, height - 2, 2, "Enter: DM | R: refresh | Esc: close", width - 4);
+    draw_text(w, height - 2, 2, "Enter: DM | P/click: profile | R: refresh", width - 4);
     wnoutrefresh(w);
     delwin(w);
 }
@@ -574,9 +603,17 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui->dirty = false;
         return;
     }
+    if (ui->show_auth) {
+        wnoutrefresh(stdscr);
+        ui_redraw_auth(ui, m);
+        doupdate();
+        ui->dirty = false;
+        return;
+    }
     mvaddnstr(ui->layout.rows - 2, 0,
-              ui->layout.cols >= 49 ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies]"
-                                    : "[Close] [Help] [Latest] [Quit] [Emoji]",
+              ui->layout.cols >= 59   ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies] [Profile]"
+              : ui->layout.cols >= 49 ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies]"
+                                      : "[Close] [Help] [Latest] [Quit] [Emoji]",
               ui->layout.cols);
     wnoutrefresh(stdscr);
     ui_redraw_topbar(ui, m);
@@ -591,6 +628,8 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui_redraw_emoji_modal(ui);
     if (ui->show_buddies_modal)
         ui_redraw_buddies_modal(ui, m);
+    if (ui->show_profile)
+        ui_redraw_profile(ui, m);
     if (ui->confirm_quit) {
         int width = ui->layout.cols < 48 ? ui->layout.cols - 2 : 46;
         WINDOW *dialog = newwin(5, width, (ui->layout.rows - 5) / 2, (ui->layout.cols - width) / 2);

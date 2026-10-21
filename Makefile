@@ -59,7 +59,7 @@ SOUNDS_GEN_H := include/client/sounds_data.h
 SOUNDS_WAVS  := sounds/Welcome.wav sounds/Goodbye.wav \
                 sounds/IM.wav sounds/BuddyIn.wav sounds/BuddyOut.wav \
                 sounds/Mention.wav sounds/Error.wav sounds/Topic.wav \
-                sounds/BuddyOnline.wav sounds/BuddyOffline.wav
+                sounds/BuddyOnline.wav sounds/BuddyOffline.wav sounds/ProfileSaved.wav
 
 $(SOUNDS_GEN_C) $(SOUNDS_GEN_H) &: $(SOUNDS_WAVS) scripts/gen_sounds.py
 	@echo "  GEN  sounds_data"
@@ -69,6 +69,7 @@ $(SOUNDS_GEN_C) $(SOUNDS_GEN_H) &: $(SOUNDS_WAVS) scripts/gen_sounds.py
 SHARED_SRC := \
     $(SHDIR)/proto/frame.c \
     $(SHDIR)/proto/tlv.c   \
+    $(SHDIR)/proto/profile.c \
     $(SHDIR)/net/transport_posix.c
 
 ifeq ($(TLS),1)
@@ -91,6 +92,7 @@ SERVER_SRC := \
     $(SRVDIR)/core/rate_limit.c \
     $(SRVDIR)/core/backpressure.c \
     $(SRVDIR)/core/buddies.c \
+    $(SRVDIR)/core/profiles.c \
     $(SRVDIR)/util/log.c      \
     $(SRVDIR)/util/config.c   \
     $(SRVDIR)/db/db.c
@@ -108,6 +110,9 @@ CLIENT_SRC := \
     $(CLIDIR)/ui/layout.c          \
     $(CLIDIR)/ui/input.c           \
     $(CLIDIR)/ui/render.c          \
+    $(CLIDIR)/ui/forms.c           \
+    $(CLIDIR)/ui/auth.c            \
+    $(CLIDIR)/ui/profiles.c        \
     $(CLIDIR)/sound.c        \
     $(SOUNDS_GEN_C)
 
@@ -169,7 +174,8 @@ $(BUILDDIR)/tests/client/test_ui: $(TESTDIR)/client/test_ui.c \
     $(BUILDDIR)/client/state/model.o $(BUILDDIR)/client/state/history.o \
     $(BUILDDIR)/client/state/text.o \
     $(BUILDDIR)/client/ui/layout.o $(BUILDDIR)/client/ui/input.o \
-    $(BUILDDIR)/client/ui/render.o
+    $(BUILDDIR)/client/ui/render.o $(BUILDDIR)/client/ui/forms.o $(BUILDDIR)/client/ui/auth.o $(BUILDDIR)/client/ui/profiles.o \
+    $(BUILDDIR)/shared/proto/profile.o $(BUILDDIR)/shared/proto/tlv.o
 	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncursesw
 
 clean:

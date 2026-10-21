@@ -11,7 +11,7 @@
 
 #define MAX_ROOMS_PER_USER 64
 
-typedef enum { CONN_HANDSHAKE, CONN_AUTHED, CONN_CLOSING } conn_state_t;
+typedef enum { CONN_HANDSHAKE, CONN_LOGIN, CONN_AUTHED, CONN_CLOSING } conn_state_t;
 
 typedef struct obuf_node {
     uint8_t *data;
@@ -33,7 +33,7 @@ typedef struct {
     char away_msg[256];
     frame_parser_t parser;
     rate_bucket_t rate;
-    time_t last_active, ping_sent_at, close_deadline;
+    time_t last_active, ping_sent_at, close_deadline, auth_started;
     bool ping_pending, want_write;
     obuf_node_t *obuf_head, *obuf_tail;
     size_t obuf_bytes;

@@ -7,7 +7,8 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 **Server**
 
 - `epoll`-based event loop with `timerfd` keepalive
-- SQLite WAL persistence (rooms, users, per-room history, topics)
+- Required account sign-in; guest connections cannot access chat
+- SQLite WAL persistence (rooms, users, profiles, buddies, per-room history, topics)
 - Token-bucket rate limiting per connection
 - Per-connection output backpressure with priority frame dropping
 - Keepalive ping/pong with configurable timeout
@@ -18,6 +19,8 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 - ncurses TUI: room sidebar, topic bar, chat pane, status bar, user list
 - Rooms and direct messages (DMs) with separate scroll state per conversation
 - Nonblocking outgoing queue capped at 256 KiB, with partial-write handling
+- Clickable account profiles and a public profile editor (F7 or `/profile`)
+- Password-masked sign-in and account creation forms
 - Typing indicators, nick-mention highlights, away status
 - Per-nick color assignment, IRC-style `/me` actions, date separators
 - Command history (Up/Down), sidebar navigation (Tab / arrow keys)
@@ -109,7 +112,14 @@ Tailscale, see [server deployment](deploy/README.md).
 ./cupid-chat --host 127.0.0.1 --port 5555 --nick bob
 ```
 
-The client auto-joins `#general` on connect. Type a message and press Enter to send.
+Sign in or choose **Create account** on the first screen. `--nick` prefills the
+account name; it does not sign you in. Tab moves between fields and buttons,
+Enter continues, and passwords are masked. After signing in, the client joins
+`#general`. Type a message and press Enter to send.
+
+Accounts are required for room lists, history, messages, and profiles. Existing
+accounts keep their passwords and saved data. Use the current client for the
+sign-in form; an older client must send `/login` or `/register` before chatting.
 
 ## Server options
 
@@ -137,7 +147,7 @@ The client auto-joins `#general` on connect. Type a message and press Enter to s
 ```
 --host HOST          Server hostname  (default: 127.0.0.1)
 --port PORT          Server port      (default: 5555)
---nick NICK          Initial nickname (default: guest<NNNN>)
+--nick NICK          Initial account name (optional)
 --tls                Use TLS connection
 --verbose            Debug output
 -h, --help
@@ -193,16 +203,18 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 |---------|-------------|
 | `/register <nick> <password>` | Create a persistent account |
 | `/login <nick> <password>` | Log in to an existing account |
-| `/logout` | Return to a guest session |
+| `/logout` | Leave rooms, clear local chats and drafts, and return to sign-in |
+| `/profile [nick or @account]` | View a profile; without a name, view and edit your own |
+| `/whois <nick>` | Look up an online nickname or account |
 
 Rooms created while logged in belong to that account across reconnects and
 server restarts. Logging out removes your account's deletion permission until
 you log in again. Renaming keeps your account identity. Each account can have
 one active login.
 
-A guest owns a room only for the connection that created it. The room, topic,
-and history remain after the guest disconnects, but ordinary clients cannot
-delete it. Logging in does not adopt rooms created earlier as a guest.
+Guest access is disabled. Old guest-created rooms and their history remain
+available after sign-in, but they do not acquire an owner automatically.
+Account names are reserved: `/nick` cannot take another account's name.
 
 Rooms saved before account ownership was introduced become unowned on upgrade.
 Their old connection IDs cannot reliably identify an account. Operators can
@@ -235,13 +247,18 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | `F3` / `Ctrl+W` | Close the active chat |
 | `F4` | Return to the newest messages |
 | `F5` | Jump to the next unread chat |
-| `F6` | Open or refresh the buddy list; Enter opens a DM with the selected online buddy |
+| `F6` | Open or refresh buddies; Enter opens a DM, P opens the selected profile |
+| `F7` | Open your profile |
 | `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
 | `Ctrl+L` | Redraw the terminal |
 
 Click a chat in the sidebar to select it. The mouse wheel scrolls the chat
 under the pointer. The footer has Close, Help, Latest, and Quit buttons;
-clicking the input line moves the cursor. Mouse support depends on your
+clicking the input line moves the cursor. Click a user, a live message name,
+a buddy, or the DM header to view that account's profile. The top bar and
+Profile footer button open your own profile. The user list also scrolls with
+the mouse wheel. The most recent status stays on the line above the footer.
+Mouse support depends on your
 terminal. Hold Shift while dragging if your terminal uses that to select text.
 
 Each room and DM retains up to 500 messages during the session. Page Up,
@@ -269,9 +286,10 @@ Log in or register before using buddies. Your list is stored with your account
 on the server and survives reconnects, nickname changes, and server restarts.
 Use `/buddy add <account>` to add an existing account, then F6 or `/buddies` to
 see who is online, away, or offline. The list holds up to 64 accounts. Arrows
-select a buddy, Enter opens a DM, R refreshes, and Esc closes the window.
+select a buddy, Enter opens a DM, P or a click opens their profile (including
+offline buddies), R refreshes, and Esc closes the window.
 
-The list follows account names, not guest nicknames. A buddy appears online
+The list follows account names across nickname changes. A buddy appears online
 while logged in; their current display nickname appears beside the account if
 it differs. Watching is one-way: adding a buddy does not add you to their list.
 Your list is sent only to your own connection. Online and offline transitions
@@ -281,6 +299,29 @@ Messages sent from an existing DM or `/reply` include its peer's session ID.
 The server rejects a message if someone else has taken that nickname. Reopen
 the DM after a buddy reconnects. Explicit `/dm <nick> <message>` still addresses
 the current holder of that nickname.
+
+### Public profiles
+
+F7 or `/profile` opens your account card. Choose Edit to set a display name,
+status, bio, pronouns, location, and website. Every field is optional and visible
+to signed-in users. The account name stays visible beside the display name.
+Profiles also show the join date, current nickname, and online or away status.
+
+In the editor, Tab moves between fields and Save/Cancel. Left/Right, Home/End,
+Backspace/Delete, Ctrl+U, and Ctrl+K edit text without splitting UTF-8 characters.
+Long fields scroll horizontally; smaller terminals show the focused field.
+Limits are 64 bytes for display name, 128 for status, 512 for bio, 32 for
+pronouns, 64 for location, and 160 for website. Save waits for server confirmation
+and plays a short chime. Cancel asks before discarding changes.
+
+Use `/profile nick`, `/whois nick`, or `/profile @account` to look someone up.
+The account form also works while they are offline. A card offers Message,
+Add buddy/Unbuddy, Refresh, and Close. Tab selects buttons and Enter activates
+them; arrows and the mouse wheel scroll the card. Opening a profile preserves
+your chat draft. Website fields display as text.
+
+Historical messages retain old connection IDs, so their names do not open a
+current user's card. Use an account name or the current user list instead.
 
 ### Emoji and Unicode
 

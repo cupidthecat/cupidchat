@@ -30,6 +30,7 @@ def main() -> None:
     write_tone(sounds / "Error.wav", [(330, 0.10), (220, 0.13)])
     write_tone(sounds / "Topic.wav", [(659.25, 0.07), (783.99, 0.10)])
     write_tone(sounds / "BuddyOnline.wav", [(523.25, 0.07), (659.25, 0.07), (783.99, 0.12)])
+    write_tone(sounds / "ProfileSaved.wav", [(659.25, 0.06), (987.77, 0.12)])
     write_tone(sounds / "BuddyOffline.wav", [(783.99, 0.07), (659.25, 0.07), (523.25, 0.12)])
 
 

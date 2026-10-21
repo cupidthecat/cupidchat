@@ -19,6 +19,7 @@
 #include "server/db.h"
 #include "server/dispatch.h"
 #include "server/log.h"
+#include "server/profiles.h"
 #include "server/rate_limit.h"
 #include "server/room.h"
 #include "server/state.h"
@@ -74,7 +75,7 @@ static bool room_valid(const char *name) {
 
 static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
     if (c->state != CONN_HANDSHAKE) {
-        return send_error(c, ERR_PROTOCOL, "already authenticated", s);
+        return send_error(c, ERR_PROTOCOL, "handshake already completed", s);
     }
 
     uint16_t version = 0;
@@ -86,19 +87,15 @@ static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
         send_error(c, ERR_PROTOCOL, "unsupported protocol version", s);
         return -1;
     }
-    if (!nick_valid(nick)) {
+    if (nick[0] && !nick_valid(nick)) {
         send_error(c, ERR_NICK_INVALID, "invalid nick (a-z A-Z 0-9 _ -)", s);
         return -1;
     }
-    if (server_find_by_nick(s, nick)) {
-        send_error(c, ERR_NICK_TAKEN, "nick already in use", s);
-        return -1;
-    }
-
     snprintf(c->nick, sizeof(c->nick), "%s", nick);
     snprintf(c->base_nick, sizeof(c->base_nick), "%s", nick);
     c->user_id = server_next_uid(s);
-    c->state = CONN_AUTHED;
+    c->state = CONN_LOGIN;
+    c->auth_started = time(NULL);
 
     /* send WELCOME */
     tlv_builder_t b;
@@ -115,13 +112,13 @@ static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
                 "            |_|        Welcome to CupidChat v1.0\n"
                 "\n"
                 "Type /help for a list of commands.");
-    tlv_put_u32(&b, TAG_CAPS, CAP_HISTORY | CAP_BUDDIES);
+    tlv_put_u32(&b, TAG_CAPS, CAP_HISTORY | CAP_BUDDIES | CAP_PROFILES | CAP_ACCOUNT_REQUIRED);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     conn_send_frame(c, SMSG_WELCOME, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), p, plen, s->cfg);
     free(p);
 
-    LOG_INFO("fd=%d nick=%s uid=%u authenticated", c->fd, c->nick, c->user_id);
+    LOG_INFO("fd=%d uid=%u awaiting account login", c->fd, c->user_id);
     return 0;
 }
 
@@ -464,8 +461,7 @@ static int handle_delete_room(conn_t *c, const frame_t *f, server_state_t *s) {
 
     if (!strcmp(r->name, "general") || !strcmp(r->name, "random"))
         return send_error(c, ERR_PERMISSION_DENIED, "cannot delete a system room", s);
-    bool owns = r->owner_account_id ? c->account_id == r->owner_account_id
-                                    : r->owner_uid && c->user_id == r->owner_uid;
+    bool owns = r->owner_account_id && c->account_id == r->owner_account_id;
     if (!owns)
         return send_error(c, ERR_PERMISSION_DENIED, "you do not own this room", s);
 
@@ -563,6 +559,11 @@ static int handle_nick(conn_t *c, const frame_t *f, server_state_t *s) {
 
     if (!nick_valid(new_nick))
         return send_error(c, ERR_NICK_INVALID, "invalid nick (a-z A-Z 0-9 _ -)", s);
+    uint64_t reserved = db_find_account(s->db, new_nick);
+    if (reserved == UINT64_MAX)
+        return send_error(c, ERR_UNKNOWN, "Could not check account name", s);
+    if (reserved && reserved != c->account_id)
+        return send_error(c, ERR_NICK_TAKEN, "That name belongs to another account", s);
 
     /* no-op if the requested nick is identical to the current one */
     if (strcmp(new_nick, c->nick) == 0)
@@ -577,13 +578,27 @@ static int handle_nick(conn_t *c, const frame_t *f, server_state_t *s) {
 
 /* Handler: CMSG_REGISTER */
 
+static bool read_credentials(const frame_t *f, char *nick, size_t nick_size, char *pass,
+                             size_t pass_size) {
+    uint16_t length;
+    const uint8_t *value = tlv_find(f->payload, f->hdr.length, TAG_NICK, &length);
+    if (!value || !length || length >= nick_size || memchr(value, 0, length))
+        return false;
+    memcpy(nick, value, length);
+    value = tlv_find(f->payload, f->hdr.length, TAG_PASSWORD, &length);
+    if (!value || !length || length >= pass_size || memchr(value, 0, length))
+        return false;
+    memcpy(pass, value, length);
+    return true;
+}
+
 static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
     if (!rate_consume(&c->rate))
         return send_error(c, ERR_RATE_LIMITED, "slow down", s);
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_NICK, nick, sizeof(nick));
-    tlv_read_str(f->payload, f->hdr.length, TAG_PASSWORD, pass, sizeof(pass));
+    if (!read_credentials(f, nick, sizeof(nick), pass, sizeof(pass)))
+        return send_error(c, ERR_PROTOCOL, "Invalid or oversized account credentials", s);
 
     if (c->registered)
         return send_error(c, ERR_PROTOCOL, "already logged in -  /logout first", s);
@@ -603,6 +618,7 @@ static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
 
     c->registered = true;
     c->account_id = account_id;
+    c->state = CONN_AUTHED;
     return server_do_rename(c, nick, SMSG_REGISTER_OK, s);
 }
 
@@ -613,8 +629,8 @@ static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
         return send_error(c, ERR_RATE_LIMITED, "slow down", s);
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_NICK, nick, sizeof(nick));
-    tlv_read_str(f->payload, f->hdr.length, TAG_PASSWORD, pass, sizeof(pass));
+    if (!read_credentials(f, nick, sizeof(nick), pass, sizeof(pass)))
+        return send_error(c, ERR_PROTOCOL, "Invalid or oversized account credentials", s);
 
     if (c->registered)
         return send_error(c, ERR_PROTOCOL, "already logged in -  /logout first", s);
@@ -626,6 +642,8 @@ static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
     uint64_t account_id = db_authenticate_account(s->db, nick, pass);
     if (!account_id)
         return send_error(c, ERR_AUTH_FAILED, "incorrect username or password", s);
+    if (db_account_name(s->db, account_id, nick, sizeof(nick)) < 0)
+        return send_error(c, ERR_UNKNOWN, "could not load account", s);
 
     conn_t *signed_in = server_find_by_account(s, account_id);
     if (signed_in && signed_in != c)
@@ -638,6 +656,7 @@ static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
 
     c->registered = true;
     c->account_id = account_id;
+    c->state = CONN_AUTHED;
     return server_do_rename(c, nick, SMSG_LOGIN_OK, s);
 }
 
@@ -648,20 +667,37 @@ static int handle_logout(conn_t *c, const frame_t *f, server_state_t *s) {
     if (!c->registered)
         return send_error(c, ERR_NOT_LOGGED_IN, "not logged in", s);
 
-    char guest_nick[MAX_NICK_LEN + 1];
-    snprintf(guest_nick, sizeof(guest_nick), "guest_%u", c->user_id);
-    conn_t *existing = server_find_by_nick(s, guest_nick);
-    while (existing && existing != c) {
-        snprintf(guest_nick, sizeof(guest_nick), "guest_%u", server_next_uid(s));
-        existing = server_find_by_nick(s, guest_nick);
+    while (c->room_count) {
+        int ri = c->rooms[0];
+        if (ri < 0 || ri >= s->room_count || !s->rooms[ri]) {
+            conn_remove_room(c, ri);
+            continue;
+        }
+        tlv_builder_t leave;
+        tlv_builder_init(&leave);
+        tlv_put_str(&leave, TAG_ROOM, s->rooms[ri]->name);
+        frame_t frame = {.hdr = {.length = (uint32_t)leave.len}, .payload = leave.buf};
+        handle_leave(c, &frame, s);
+        tlv_builder_free(&leave);
     }
 
     uint64_t account = c->account_id;
     c->registered = false;
     c->account_id = 0;
     c->buddy_count = 0;
+    c->state = CONN_LOGIN;
+    c->nick[0] = c->base_nick[0] = c->away_msg[0] = '\0';
+    c->is_away = c->ping_pending = false;
+    c->user_id = server_next_uid(s);
+    c->auth_started = time(NULL);
     server_buddy_presence(s, account, true);
-    return server_do_rename(c, guest_nick, SMSG_LOGOUT_OK, s);
+    tlv_builder_t reply;
+    tlv_builder_init(&reply);
+    tlv_put_u32(&reply, TAG_USER_ID, c->user_id);
+    int rc = conn_send_frame(c, SMSG_LOGOUT_OK, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s),
+                             reply.buf, (uint32_t)reply.len, s->cfg);
+    tlv_builder_free(&reply);
+    return rc;
 }
 
 /* Handler: CMSG_SET_TOPIC */
@@ -801,12 +837,17 @@ static int handle_ping(conn_t *c, const frame_t *f, server_state_t *s) {
 int dispatch_frame(conn_t *c, const frame_t *f, server_state_t *s) {
     /* update liveness regardless of message type */
     c->last_active = time(NULL);
+    if (c->state == CONN_CLOSING)
+        return -1;
 
     /* guard: unauthenticated clients may only send HELLO; CMSG_NICK requires auth */
     if (c->state == CONN_HANDSHAKE && f->hdr.type != CMSG_HELLO) {
         send_error(c, ERR_AUTH_REQUIRED, "must HELLO first", s);
         return -1;
     }
+    if (c->state == CONN_LOGIN && f->hdr.type != CMSG_REGISTER && f->hdr.type != CMSG_LOGIN &&
+        f->hdr.type != CMSG_PING && f->hdr.type != CMSG_PONG)
+        return send_error(c, ERR_AUTH_REQUIRED, "Create an account or log in before chatting", s);
 
     switch ((client_msg_t)f->hdr.type) {
         case CMSG_HELLO:
@@ -847,6 +888,9 @@ int dispatch_frame(conn_t *c, const frame_t *f, server_state_t *s) {
         case CMSG_BUDDY_REMOVE:
         case CMSG_BUDDY_LIST:
             return server_buddy_command(s, c, f);
+        case CMSG_PROFILE_GET:
+        case CMSG_PROFILE_SET:
+            return server_profile_command(s, c, f);
         /* file transfer: not yet implemented */
         case CMSG_FILE_OFFER:
         case CMSG_FILE_ACCEPT:
