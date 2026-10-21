@@ -432,15 +432,28 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 m->is_away = going_away;
                 snprintf(m->away_msg, sizeof(m->away_msg), "%s", away_msg);
             }
-            /* push a system message to every room that user is in */
+            /* Room tags scope the notice; older servers send no room tags. */
+            bool scoped = tlv_find(p, pl, TAG_ROOM, NULL) != NULL;
             char info[320];
             if (going_away)
                 snprintf(info, sizeof(info), "%s is now away: %s", nick, away_msg);
             else
                 snprintf(info, sizeof(info), "%s is back", nick);
             for (int i = 0; i < m->room_count; i++) {
+                bool affected = !scoped;
+                if (scoped) {
+                    tlv_reader_t reader;
+                    tlv_field_t field;
+                    tlv_reader_init(&reader, p, pl);
+                    while (tlv_reader_next(&reader, &field))
+                        if (field.tag == TAG_ROOM && field.len == strlen(m->rooms[i].name) &&
+                            !memcmp(field.val, m->rooms[i].name, field.len)) {
+                            affected = true;
+                            break;
+                        }
+                }
                 /* only post in rooms we are actually a member of */
-                if (m->rooms[i].active && m->rooms[i].joined)
+                if (affected && m->rooms[i].active && m->rooms[i].joined)
                     model_push_system_msg(m, m->rooms[i].name, info, (uint64_t)time(NULL) * 1000,
                                           MSG_SYSTEM);
             }

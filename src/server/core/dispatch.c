@@ -556,6 +556,8 @@ static int server_do_rename(conn_t *c, const char *new_nick, server_msg_t confir
 /* Handler: CMSG_NICK */
 
 static int handle_nick(conn_t *c, const frame_t *f, server_state_t *s) {
+    if (!rate_consume(&c->rate))
+        return send_error(c, ERR_RATE_LIMITED, "slow down", s);
     char new_nick[MAX_NICK_LEN + 1] = {0};
     tlv_read_str(f->payload, f->hdr.length, TAG_NICK, new_nick, sizeof(new_nick));
 
@@ -755,6 +757,9 @@ static int handle_away(conn_t *c, const frame_t *f, server_state_t *s) {
     tlv_put_u32(&b, TAG_USER_ID, c->user_id);
     if (c->is_away)
         tlv_put_str(&b, TAG_AWAY_MSG, c->away_msg);
+    for (int i = 0; i < c->room_count; i++)
+        if (c->rooms[i] >= 0 && c->rooms[i] < s->room_count && s->rooms[c->rooms[i]])
+            tlv_put_str(&b, TAG_ROOM, s->rooms[c->rooms[i]]->name);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     uint8_t *raw;
@@ -762,9 +767,21 @@ static int handle_away(conn_t *c, const frame_t *f, server_state_t *s) {
         frame_encode(SMSG_USER_AWAY, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), p, plen, &raw);
     free(p);
     if (rlen > 0) {
-        /* send to every room the user is in, including to themselves */
-        for (int i = 0; i < c->room_count; i++)
-            server_broadcast_room(s, c->rooms[i], -1, raw, (size_t)rlen, FRAME_FLAG_PRIORITY_HIGH);
+        for (int fd = 0; fd < s->conns_size; fd++) {
+            conn_t *target = s->conns[fd];
+            if (!target || target->state != CONN_AUTHED)
+                continue;
+            bool shared = target == c;
+            for (int i = 0; !shared && i < c->room_count; i++)
+                shared = conn_is_room_member(target, c->rooms[i]);
+            if (!shared)
+                continue;
+            uint8_t *copy = malloc((size_t)rlen);
+            if (copy) {
+                memcpy(copy, raw, (size_t)rlen);
+                conn_enqueue(target, copy, (size_t)rlen, FRAME_FLAG_PRIORITY_HIGH, s->cfg);
+            }
+        }
         free(raw);
     }
     LOG_INFO("fd=%d nick=%s %s: %.80s", c->fd, c->nick, c->is_away ? "now away" : "back",
