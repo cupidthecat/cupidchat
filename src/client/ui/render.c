@@ -115,6 +115,10 @@ void ui_redraw_topbar(ui_state_t *ui, const cli_model_t *m) {
              m->server_name[0] ? m->server_name : "cupidchat", m->is_admin ? " [admin]" : "",
              nick_display, chat);
 
+    if (m->server_caps & CAP_BBS) {
+        size_t base = strlen(line);
+        snprintf(line + base, sizeof(line) - base, " | BBS: %u (F9)", m->board_unread);
+    }
     /* status message */
     if (m->status_msg[0] && time(NULL) < m->status_msg_until) {
         size_t base = strlen(line);
@@ -429,6 +433,10 @@ static const char *HELP_LINES[] = {"  ACCOUNT",
                                    "  F7 /profile [nick/@account]  View or edit profile",
                                    "  Click users or buddies to view their profile",
                                    "  F8 /poll; /vote <1-4>     Server polls",
+                                   "  F9 /board or /bbs        Persistent BBS board",
+                                   "  BBS: N new, A reply, U author, R refresh",
+                                   "  BBS: Left/Right pages, PgUp/Dn scrolls",
+                                   "  BBS admin: P pins; L locks a thread",
                                    "  /motd /banner             Read server messages",
                                    "  /admin help               Admin command reference",
                                    "  /register <nick> <pass>   Create account & log in",
@@ -617,7 +625,9 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         return;
     }
     mvaddnstr(ui->layout.rows - 2, 0,
-              ui->layout.cols >= 59   ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies] [Profile]"
+              ui->layout.cols >= 66
+                  ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies] [Profile] [BBS]"
+              : ui->layout.cols >= 59 ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies] [Profile]"
               : ui->layout.cols >= 49 ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies]"
                                       : "[Close] [Help] [Latest] [Quit] [Emoji]",
               ui->layout.cols);
@@ -634,6 +644,8 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui_redraw_emoji_modal(ui);
     if (ui->show_buddies_modal)
         ui_redraw_buddies_modal(ui, m);
+    if (ui->board.visible)
+        ui_redraw_board(ui, m);
     if (ui->show_profile)
         ui_redraw_profile(ui, m);
     if (ui->show_poll)

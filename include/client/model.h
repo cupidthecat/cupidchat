@@ -59,7 +59,7 @@ typedef struct {
 typedef struct {
     cli_status_t status;
     uint32_t session_id, user_id;
-    uint32_t server_caps;
+    uint32_t server_caps, board_unread;
     bool logged_in, is_admin, is_muted;
     char banner[513];
     poll_info_t poll;

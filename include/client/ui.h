@@ -1,5 +1,6 @@
 /* CupidChat public interface. */
 #pragma once
+#include "client/board.h"
 #include "client/model.h"
 
 typedef struct {
@@ -28,11 +29,21 @@ enum {
     UI_PROFILE_REFRESH,
     UI_POLL_OPEN,
     UI_POLL_VOTE,
+    UI_BOARD_OPEN,
+    UI_BOARD_THREAD,
+    UI_BOARD_LIST,
+    UI_BOARD_PREV,
+    UI_BOARD_NEXT,
+    UI_BOARD_POST,
+    UI_BOARD_DELETE,
+    UI_BOARD_PIN,
+    UI_BOARD_LOCK,
     UI_QUIT
 };
 
 typedef struct {
     ui_layout_t layout;
+    board_state_t board;
     void *win_topbar, *win_topic, *win_rooms, *win_chat, *win_users, *win_input;
     bool show_users, dirty, show_help_modal, show_emoji_modal, show_buddies_modal, confirm_quit;
     bool show_poll, poll_pending;
@@ -91,3 +102,7 @@ int ui_profile_target(ui_state_t *ui, uint32_t uid, const char *nick, const char
 
 int ui_poll_input(ui_state_t *ui, const cli_model_t *m, int key);
 void ui_redraw_poll(ui_state_t *ui, const cli_model_t *m);
+
+int ui_board_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
+                   bool printable);
+void ui_redraw_board(ui_state_t *ui, const cli_model_t *m);

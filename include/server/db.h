@@ -1,6 +1,7 @@
 /* CupidChat public interface. */
 #pragma once
 #include "proto/admin.h"
+#include "proto/bbs.h"
 #include "proto/profile.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -45,3 +46,15 @@ int db_get_poll(cupid_db_t *db, uint64_t id, uint64_t account, poll_info_t *poll
 int db_create_poll(cupid_db_t *db, uint64_t actor, const poll_info_t *poll);
 int db_vote_poll(cupid_db_t *db, uint64_t id, uint64_t account, uint32_t choice);
 int db_close_poll(cupid_db_t *db);
+
+int db_init_bbs(cupid_db_t *db);
+int db_bbs_status(cupid_db_t *db, uint64_t account, uint32_t *unread);
+int db_bbs_list(cupid_db_t *db, uint64_t account, uint32_t offset, bbs_thread_t *rows, int *count,
+                bool *more);
+int db_bbs_view(cupid_db_t *db, uint64_t account, uint64_t id, uint64_t before, uint64_t after,
+                bbs_view_t *view);
+int db_bbs_read(cupid_db_t *db, uint64_t account, uint64_t thread, uint64_t last);
+int db_bbs_post(cupid_db_t *db, uint64_t account, uint64_t *thread, const char *title,
+                const char *body, uint64_t *post);
+int db_bbs_delete(cupid_db_t *db, uint64_t account, bool admin, uint64_t post, uint64_t *thread);
+int db_bbs_flags(cupid_db_t *db, uint64_t thread, const char *setting, bool value);

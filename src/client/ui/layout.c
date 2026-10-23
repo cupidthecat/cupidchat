@@ -154,6 +154,7 @@ int ui_init(ui_state_t *ui) {
 
 void ui_free(ui_state_t *ui) {
     ui_auth_clear_secrets(ui);
+    explicit_bzero(&ui->board, sizeof(ui->board));
     destroy_windows(ui);
     endwin();
 

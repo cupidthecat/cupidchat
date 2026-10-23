@@ -7,6 +7,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 **Server**
 
 - `epoll`-based event loop with `timerfd` keepalive
+- Persistent BBS threads and replies, unread markers, and clickable author profiles
 - Persistent account moderation, admin roles, editable MOTD and banners, and server polls
 - Required account sign-in; guest connections cannot access chat
 - SQLite WAL persistence (rooms, users, profiles, buddies, per-room history, topics)
@@ -254,6 +255,7 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | `F6` | Open or refresh buddies; Enter opens a DM, P opens the selected profile |
 | `F7` | Open your profile |
 | `F8` | Open the latest server poll |
+| `F9` | Open the BBS board |
 | `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
 | `Ctrl+L` | Redraw the terminal |
 
@@ -304,6 +306,46 @@ Messages sent from an existing DM or `/reply` include its peer's session ID.
 The server rejects a message if someone else has taken that nickname. Reopen
 the DM after a buddy reconnects. Explicit `/dm <nick> <message>` still addresses
 the current holder of that nickname.
+
+### BBS board
+
+F9, `/board`, `/bbs`, or the BBS footer button opens the board. It requires an
+account, and posts stay on the server after everyone disconnects. The top bar
+shows how many threads have unread posts. `*` marks unread threads, `P` marks
+pinned threads, and `L` marks locked threads. Each row also shows its post count.
+Pinned threads appear first; other threads follow their most recent post.
+
+Use arrows to select a thread, then Enter or a click to open it. Left/Right or
+Prev/Next switches pages of 20 threads. In a thread, Up/Down selects a post,
+PgUp/PgDn or the mouse wheel scrolls, and Older/Newer loads another page of 20
+posts. Threads open at their most recent page. Opening a page marks posts read
+through the last post on that page; older pages do not move your read marker
+backward. Read markers belong to your account and survive reconnects.
+
+N starts a thread. A or Reply answers the open thread. Enter moves from the
+subject to the body and then to Post; Tab moves between fields and buttons.
+Ctrl+S posts directly. Subjects allow 128 UTF-8 bytes and message bodies allow
+2048. Bodies are single paragraphs that wrap in the editor and reader.
+Left/Right, Home/End, Backspace/Delete, Ctrl+U, and Ctrl+K edit text without
+splitting UTF-8 characters. Wait five seconds between posts. If saving fails,
+your draft stays available. Esc or Cancel asks before discarding it.
+
+Click a post's author, use U, or choose Author to open their account profile,
+including offline authors. Esc closes the profile and returns to the board.
+F7 also opens your own profile from the composer. The board and profiles
+preserve your live-chat draft. Closing the board keeps its current view.
+
+D or Remove asks before clearing a post's body. Authors can remove their own
+posts; admins can remove any post. A placeholder remains with the author and
+date, and the thread subject stays available so replies keep their context.
+Admins can press P to pin or unpin a thread and L to lock or unlock replies.
+Locked threads remain readable. Muted accounts can read and remove their own
+posts but cannot create threads or replies.
+
+A separate tone announces a new post from another account. `/sound off` mutes
+it. Notifications do not switch chats or move the board while you are reading;
+R or Refresh loads updates. Initial board loading, removals, pins, and locks
+stay quiet. Saving a post uses the existing save chime.
 
 ### Server messages, polls, and admins
 

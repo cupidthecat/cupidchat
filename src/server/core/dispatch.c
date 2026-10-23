@@ -15,6 +15,7 @@
 #include "proto/tlv.h"
 #include "proto/types.h"
 #include "server/admin.h"
+#include "server/bbs.h"
 #include "server/buddies.h"
 #include "server/conn.h"
 #include "server/db.h"
@@ -119,7 +120,7 @@ static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
     tlv_put_str(&b, TAG_BANNER, banner);
     tlv_put_u32(&b, TAG_CAPS,
                 CAP_HISTORY | CAP_BUDDIES | CAP_PROFILES | CAP_ACCOUNT_REQUIRED | CAP_ADMIN |
-                    CAP_POLLS);
+                    CAP_POLLS | CAP_BBS);
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     conn_send_frame(c, SMSG_WELCOME, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), p, plen, s->cfg);
@@ -945,6 +946,13 @@ int dispatch_frame(conn_t *c, const frame_t *f, server_state_t *s) {
         case CMSG_POLL_GET:
         case CMSG_POLL_VOTE:
             return server_poll_command(s, c, f);
+        case CMSG_BBS_STATUS:
+        case CMSG_BBS_LIST:
+        case CMSG_BBS_GET:
+        case CMSG_BBS_POST:
+        case CMSG_BBS_DELETE:
+        case CMSG_BBS_FLAGS:
+            return server_bbs_command(s, c, f);
         /* file transfer: not yet implemented */
         case CMSG_FILE_OFFER:
         case CMSG_FILE_ACCEPT:

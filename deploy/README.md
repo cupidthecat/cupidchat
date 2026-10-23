@@ -102,6 +102,17 @@ The schema adds `account_controls`, `server_settings`, `admin_actions`, `polls`,
 roles, MOTD, banners, poll options, and votes survive restarts. Individual vote
 choices remain visible to server operators through the database.
 
+### BBS storage
+
+Startup adds `bbs_threads`, `bbs_posts`, and `bbs_reads`. Include all three in
+SQLite backups along with the existing tables. Thread and post authors refer
+to persistent accounts, and read markers are saved per account and thread.
+Board upgrades preserve existing rooms, messages, profiles, polls, and roles.
+
+The server advertises board support in its capability response. Use
+an updated client for F9 and `/board`; older clients can still use live chat.
+No additional listener, port, or service is needed.
+
 ### Ownership migration
 
 Back up the database with SQLite's backup API before upgrading. The schema adds
