@@ -38,8 +38,13 @@ void board_action(ui_state_t *ui, cli_model_t *m, client_conn_t *cc, int action)
     if (b->pending)
         return;
     if (action == UI_BOARD_OPEN) {
+        bool reopening = !b->visible;
         b->visible = true;
         ui->show_poll = ui->show_buddies_modal = ui->show_emoji_modal = ui->show_help_modal = false;
+        if (reopening && b->loaded) {
+            ui->dirty = true;
+            return;
+        }
         request(ui, m, cc,
                 (board_request_t){.type = b->thread_mode ? CMSG_BBS_GET : CMSG_BBS_LIST,
                                   .thread = b->view.thread.id,
@@ -137,6 +142,8 @@ bool board_frame(ui_state_t *ui, cli_model_t *m, client_conn_t *cc, const frame_
         tlv_read_str(p, length, TAG_BASE_NICK, author, sizeof(author));
         tlv_read_str(p, length, TAG_SCOPE, scope, sizeof(scope));
         b->stale = true;
+        if (!b->composing && !b->pending)
+            b->message[0] = '\0';
         status(cc);
         if (!strcmp(scope, "post") && strcasecmp(author, m->base_nick) &&
             !model_is_ignored(m, author)) {
@@ -219,9 +226,10 @@ bool board_frame(ui_state_t *ui, cli_model_t *m, client_conn_t *cc, const frame_
         }
     }
     b->pending = false;
-    if (valid)
+    if (valid) {
         b->stale = false;
-    else
+        b->loaded = true;
+    } else
         message(ui, m, "Invalid board response; refresh to retry");
     return true;
 }

@@ -10,7 +10,7 @@ typedef struct {
     bbs_view_t view;
     char title[BBS_TITLE_SIZE], body[BBS_BODY_SIZE], message[192];
     int buttons[8][4], button_count, post_rows[BBS_PAGE_SIZE][2];
-    bool thread_mode;
+    bool thread_mode, loaded;
 } board_state_t;
 
 typedef struct {

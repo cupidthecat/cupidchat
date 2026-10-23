@@ -109,7 +109,7 @@ SQLite backups along with the existing tables. Thread and post authors refer
 to persistent accounts, and read markers are saved per account and thread.
 Board upgrades preserve existing rooms, messages, profiles, polls, and roles.
 
-Clients advertise board support through the server capability response. Use
+The server advertises board support in its capability response. Use
 an updated client for F9 and `/board`; older clients can still use live chat.
 No additional listener, port, or service is needed.
 
