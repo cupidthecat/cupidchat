@@ -1584,12 +1584,16 @@ int main(int argc, char **argv) {
         }
 
         /* Network traffic shares a display cadence; local input paints immediately. */
-        if (ui.dirty || ui.input_dirty || ui.modal_dirty ||
-            (fctx.network_dirty && monotonic_ms() >= next_redraw)) {
-            ui.dirty |= fctx.network_dirty;
-            fctx.network_dirty = false;
+        bool network_due = fctx.network_dirty && monotonic_ms() >= next_redraw;
+        if (ui.dirty || ui.input_dirty || ui.modal_dirty || network_due) {
+            bool background = ui.dirty || network_due;
+            if (background) {
+                ui.dirty |= fctx.network_dirty;
+                fctx.network_dirty = false;
+            }
             ui_redraw(&ui, &model);
-            next_redraw = monotonic_ms() + NETWORK_REDRAW_MS;
+            if (background)
+                next_redraw = monotonic_ms() + NETWORK_REDRAW_MS;
         }
 
         struct pollfd pfds[] = {
