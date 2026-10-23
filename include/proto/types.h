@@ -13,6 +13,7 @@
 #define CAP_ACCOUNT_REQUIRED 0x00000008u
 #define CAP_ADMIN 0x00000010u
 #define CAP_POLLS 0x00000020u
+#define CAP_BBS 0x00000040u
 #define MAX_BUDDIES 64
 
 /* Shared wire values. Rebuild clients with these recovered headers:
@@ -44,6 +45,12 @@ typedef enum {
     CMSG_ADMIN = 0x0060,
     CMSG_POLL_GET = 0x0061,
     CMSG_POLL_VOTE = 0x0062,
+    CMSG_BBS_STATUS = 0x0070,
+    CMSG_BBS_LIST = 0x0071,
+    CMSG_BBS_GET = 0x0072,
+    CMSG_BBS_POST = 0x0073,
+    CMSG_BBS_DELETE = 0x0074,
+    CMSG_BBS_FLAGS = 0x0075,
     CMSG_FILE_OFFER = 0x0100,
     CMSG_FILE_ACCEPT = 0x0101,
     CMSG_FILE_DECLINE = 0x0102,
@@ -79,7 +86,12 @@ typedef enum {
     SMSG_PROFILE_SAVED = 0x8051,
     SMSG_ACCOUNT_FLAGS = 0x8060,
     SMSG_SERVER_NOTICE = 0x8061,
-    SMSG_POLL = 0x8062
+    SMSG_POLL = 0x8062,
+    SMSG_BBS_STATUS = 0x8070,
+    SMSG_BBS_LIST = 0x8071,
+    SMSG_BBS_THREAD = 0x8072,
+    SMSG_BBS_SAVED = 0x8073,
+    SMSG_BBS_CHANGED = 0x8074
 } server_msg_t;
 
 typedef enum {
@@ -123,7 +135,22 @@ typedef enum {
     TAG_OPTION = 0x0065,
     TAG_VOTES = 0x0066,
     TAG_VOTE = 0x0067,
-    TAG_CLOSED = 0x0068
+    TAG_CLOSED = 0x0068,
+    TAG_THREAD_ID = 0x0070,
+    TAG_POST_ID = 0x0071,
+    TAG_TITLE = 0x0072,
+    TAG_COUNT = 0x0073,
+    TAG_UNREAD = 0x0074,
+    TAG_OFFSET = 0x0075,
+    TAG_MORE = 0x0076,
+    TAG_BEFORE_ID = 0x0077,
+    TAG_AFTER_ID = 0x0078,
+    TAG_DELETED = 0x0079,
+    TAG_LOCKED = 0x007a,
+    TAG_PINNED = 0x007b,
+    TAG_OLDER = 0x007c,
+    TAG_NEWER = 0x007d,
+    TAG_ENTRY = 0x007e
 } tlv_tag_t;
 
 typedef enum {

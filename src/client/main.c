@@ -23,6 +23,7 @@
 
 #include "client/sound.h"
 
+#include "client/board_flow.h"
 #include "client/client_config.h"
 #include "client/client_conn.h"
 #include "client/history.h"
@@ -284,6 +285,8 @@ static void enter_chat(frame_ctx_t *ctx) {
     model_set_status(m, "Connected", 8);
     if (m->server_caps & CAP_POLLS)
         client_send_poll(cc, 0, 0);
+    if (m->server_caps & CAP_BBS)
+        client_send_board(cc, &(board_request_t){.type = CMSG_BBS_STATUS});
 }
 
 static void on_frame(const frame_t *f, void *ctx_ptr) {
@@ -293,6 +296,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
     const uint8_t *p = f->payload;
     uint32_t pl = f->hdr.length;
 
+    if (board_frame(ctx->ui, m, cc, f))
+        return;
     switch ((server_msg_t)f->hdr.type) {
 
         case SMSG_WELCOME: {
@@ -891,6 +896,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             ui->show_profile = ui->profile_editing = ui->profile_saving = ui->profile_loading =
                 false;
             ui->show_poll = ui->poll_pending = ui->poll_requested = false;
+            explicit_bzero(&ui->board, sizeof(ui->board));
             ui->profile_discard = false;
             memset(&ui->profile, 0, sizeof(ui->profile));
             explicit_bzero(&ui->profile_draft, sizeof(ui->profile_draft));
@@ -1072,7 +1078,9 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
         }
     }
 
-    if (!strcmp(cmd, "admin") || !strncmp(cmd, "admin ", 6)) {
+    if (!strcmp(cmd, "board") || !strcmp(cmd, "bbs")) {
+        board_action(ui, m, cc, UI_BOARD_OPEN);
+    } else if (!strcmp(cmd, "admin") || !strncmp(cmd, "admin ", 6)) {
         admin_command(cmd[5] ? cmd + 6 : "", m, cc);
     } else if (!strcmp(cmd, "poll")) {
         if (m->server_caps & CAP_POLLS) {
@@ -1554,6 +1562,10 @@ int main(int argc, char **argv) {
                 g_quit = 1;
                 break;
             }
+            if (kr >= UI_BOARD_OPEN && kr <= UI_BOARD_LOCK) {
+                board_action(&ui, &model, &cc, kr);
+                continue;
+            }
             if (kr == UI_POLL_OPEN) {
                 if (!(model.server_caps & CAP_POLLS))
                     model_set_status(&model, "This server does not support polls", 5);
@@ -1700,8 +1712,9 @@ int main(int argc, char **argv) {
                 /* regular keystroke -  send typing notification (throttled) */
                 time_t now = time(NULL);
                 if (model.status == CLI_ONLINE && !model.is_muted && !ui.show_profile &&
-                    !ui.show_poll && !ui.show_buddies_modal && !ui.show_help_modal &&
-                    model.active_room >= 0 && ui.input_len > 0 && now - last_typing_sent >= 2) {
+                    !ui.show_poll && !ui.board.visible && !ui.show_buddies_modal &&
+                    !ui.show_help_modal && model.active_room >= 0 && ui.input_len > 0 &&
+                    now - last_typing_sent >= 2) {
                     const char *room = model.rooms[model.active_room].name;
                     client_send_typing(&cc, room);
                     last_typing_sent = now;

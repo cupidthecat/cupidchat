@@ -507,3 +507,26 @@ int client_send_poll(client_conn_t *cc, uint64_t id, uint32_t choice) {
     tlv_builder_free(&b);
     return rc;
 }
+
+int client_send_board(client_conn_t *cc, const board_request_t *r) {
+    tlv_builder_t b;
+    tlv_builder_init(&b);
+    bool failed = tlv_put_u32(&b, TAG_REQUEST_ID, r->request) < 0 ||
+                  tlv_put_u32(&b, TAG_OFFSET, r->offset) < 0 ||
+                  tlv_put_u64(&b, TAG_THREAD_ID, r->thread) < 0 ||
+                  tlv_put_u64(&b, TAG_POST_ID, r->post) < 0 ||
+                  tlv_put_u64(&b, TAG_BEFORE_ID, r->before) < 0 ||
+                  tlv_put_u64(&b, TAG_AFTER_ID, r->after) < 0;
+    if (r->title)
+        failed |= tlv_put_str(&b, TAG_TITLE, r->title) < 0;
+    if (r->body)
+        failed |= tlv_put_str(&b, TAG_TEXT, r->body) < 0;
+    if (r->setting) {
+        failed |= tlv_put_str(&b, TAG_SCOPE, r->setting) < 0;
+        failed |=
+            tlv_put_u8(&b, !strcmp(r->setting, "pin") ? TAG_PINNED : TAG_LOCKED, r->value) < 0;
+    }
+    int rc = failed ? -1 : client_send_frame(cc, r->type, b.buf, (uint32_t)b.len);
+    tlv_builder_free(&b);
+    return rc;
+}

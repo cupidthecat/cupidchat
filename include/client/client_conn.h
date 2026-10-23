@@ -1,5 +1,6 @@
 /* CupidChat public interface. */
 #pragma once
+#include "client/board.h"
 #include "net/transport.h"
 #include "proto/frame.h"
 #include "proto/profile.h"
@@ -48,3 +49,5 @@ int client_get_profile(client_conn_t *cc, uint32_t request, uint32_t uid, const 
 int client_save_profile(client_conn_t *cc, uint32_t request, const profile_fields_t *fields);
 int client_send_buddy(client_conn_t *cc, uint16_t type, const char *account);
 int client_read_frames(client_conn_t *cc, void (*on_frame)(const frame_t *, void *ctx), void *ctx);
+
+int client_send_board(client_conn_t *cc, const board_request_t *request);

@@ -57,6 +57,8 @@ int ui_click(ui_state_t *ui, const cli_model_t *m, int x, int y) {
             return ui_profile_target(ui, m->users[index].user_id, m->users[index].nick, NULL);
     }
     if (y == ui->layout.rows - 2) {
+        if (x >= 59 && x < 64 && ui->layout.cols >= 66)
+            return UI_BOARD_OPEN;
         if (x >= 49 && x < 58 && ui->layout.cols >= 59)
             return ui_profile_target(ui, 0, NULL, m->base_nick);
         if (x < 7)
@@ -196,10 +198,6 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
             return ch == 0x11 ? UI_QUIT : UI_NONE;
         return ui_auth_input(ui, ch, key, kind == OK);
     }
-    if (ui->show_poll)
-        return ui_poll_input(ui, m, ch);
-    if (ui->show_profile)
-        return ui_profile_input(ui, m, ch, key, kind == OK);
     if (ui->confirm_quit) {
         if (ch == '\n' || ch == KEY_ENTER)
             return UI_QUIT;
@@ -209,6 +207,16 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return UI_NONE;
     }
 
+    if (ch == KEY_F(10) || ch == 0x11) {
+        ui->confirm_quit = ui->dirty = true;
+        return UI_NONE;
+    }
+    if (ui->show_profile)
+        return ui_profile_input(ui, m, ch, key, kind == OK);
+    if (ui->board.visible)
+        return ui_board_input(ui, m, ch, key, kind == OK);
+    if (ui->show_poll)
+        return ui_poll_input(ui, m, ch);
     if (ui->show_emoji_modal) {
         if (ch == 27)
             ui->show_emoji_modal = false;
@@ -280,10 +288,6 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return 0;
     }
 
-    if (ch == KEY_F(10) || ch == 0x11) {
-        ui->confirm_quit = ui->dirty = true;
-        return UI_NONE;
-    }
     if (ui->layout.too_small)
         return UI_NONE;
     if (ch == KEY_F(1)) {
@@ -301,6 +305,8 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         return UI_LATEST;
     if (ch == KEY_F(5))
         return UI_NEXT_UNREAD;
+    if (ch == KEY_F(9))
+        return UI_BOARD_OPEN;
     if (ch == KEY_F(8))
         return UI_POLL_OPEN;
     if (ch == KEY_F(7))

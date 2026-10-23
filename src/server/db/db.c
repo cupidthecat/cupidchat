@@ -138,7 +138,7 @@ int db_init_schema(cupid_db_t *db) {
         ensure_room_column(
             db, "owner_account_id",
             "ALTER TABLE rooms ADD COLUMN owner_account_id INTEGER REFERENCES users(id)") < 0 ||
-        db_init_admin(db) < 0 ||
+        db_init_admin(db) < 0 || db_init_bbs(db) < 0 ||
         sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
         LOG_ERROR("db_init_schema: %s", sqlite3_errmsg(db->handle));
         sqlite3_exec(db->handle, "ROLLBACK", NULL, NULL, NULL);

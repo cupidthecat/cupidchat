@@ -59,3 +59,7 @@ extern const uint8_t snd_profile_saved_data[];
 /* notice — 10188 bytes */
 extern const uint8_t snd_notice_data[];
 #define snd_notice_size 10188U
+
+/* board — 11068 bytes */
+extern const uint8_t snd_board_data[];
+#define snd_board_size 11068U
