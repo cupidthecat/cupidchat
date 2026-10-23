@@ -29,6 +29,7 @@
 #include "client/history.h"
 #include "client/model.h"
 #include "client/room_flow.h"
+#include "client/text.h"
 #include "client/ui.h"
 #include "proto/frame.h"
 #include "proto/room_tools.h"
@@ -1877,9 +1878,12 @@ int main(int argc, char **argv) {
     }
 
     ui_free(&ui);
-    if (model.status == CLI_DISCONNECTED)
-        fprintf(stderr, "Connection closed. Last status: %s\n",
-                model.status_msg[0] ? model.status_msg : "Server disconnected");
+    if (model.status == CLI_DISCONNECTED) {
+        char status[sizeof(model.status_msg)];
+        text_wrap_line(model.status_msg[0] ? model.status_msg : "Server disconnected", 512, 0,
+                       status, sizeof(status));
+        fprintf(stderr, "Connection closed. Last status: %s\n", status);
+    }
     sound_play_sync(SND_GOODBYE); /* plays to completion before teardown */
     client_disconnect(&cc);
     model_free(&model);
