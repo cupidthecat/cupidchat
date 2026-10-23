@@ -14,6 +14,13 @@ int ui_profile_target(ui_state_t *ui, uint32_t uid, const char *nick, const char
     return UI_PROFILE_OPEN;
 }
 
+static bool can_invite(const cli_model_t *m) {
+    if (!(m->server_caps & CAP_ROOM_TOOLS) || m->active_room < 0 || m->active_room >= m->room_count)
+        return false;
+    const cli_room_t *room = &m->rooms[m->active_room];
+    return room->joined && (m->is_admin || (room->room_role & (ROOM_OWNER | ROOM_OPERATOR)));
+}
+
 static void geometry(const ui_state_t *ui, int *h, int *w, int *y, int *x) {
     *h = ui->layout.rows - 2;
     if (*h > 23)
@@ -49,6 +56,8 @@ static int activate(ui_state_t *ui, int action) {
         ui->show_profile = false;
     else if (action == 5)
         return UI_PROFILE_SAVE;
+    else if (action == 7)
+        return UI_PROFILE_INVITE;
     else if (action == 6) {
         if (memcmp(&ui->profile_draft, &ui->profile.fields, sizeof(ui->profile_draft)))
             ui->profile_discard = true;
@@ -60,7 +69,6 @@ static int activate(ui_state_t *ui, int action) {
 
 int ui_profile_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
                      bool printable) {
-    (void)m;
     ui->dirty = true;
     if (ui->layout.too_small)
         return key == 0x11 ? UI_QUIT : UI_NONE;
@@ -133,7 +141,9 @@ int ui_profile_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t cha
                 ui->profile_error[0] = '\0';
         }
     } else {
-        int total = ui->profile.is_self ? 3 : 4;
+        int total = ui->profile.is_self ? 3 : can_invite(m) ? 5 : 4;
+        if (ui->profile_focus >= total)
+            ui->profile_focus = total - 1;
         if (key == '\t' || key == KEY_RIGHT)
             ui->profile_focus = (ui->profile_focus + 1) % total;
         else if (key == KEY_BTAB || key == KEY_LEFT)
@@ -143,7 +153,12 @@ int ui_profile_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t cha
         else if (key == KEY_UP || key == KEY_PPAGE)
             ui->profile_offset -= key == KEY_PPAGE ? h - 5 : 1;
         else if (key == '\n' || key == KEY_ENTER) {
-            int actions_self[] = {0, 3, 4}, actions_other[] = {1, 2, 3, 4};
+            int actions_self[] = {0, 3, 4}, actions_other[] = {1, 2, 3, 4, 4};
+            if (can_invite(m)) {
+                actions_other[2] = 7;
+                actions_other[3] = 3;
+                actions_other[4] = 4;
+            }
             return activate(ui, ui->profile.is_self ? actions_self[ui->profile_focus]
                                                     : actions_other[ui->profile_focus]);
         } else if ((key == 'e' || key == 'E') && ui->profile.is_self)
@@ -250,6 +265,8 @@ void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
         for (int i = 1; i < PROFILE_FIELD_COUNT; i++)
             snprintf(lines[count++], 768, "%s: %s", PROFILE_FIELDS[i].label,
                      *profile_field(&p->fields, i) ? profile_field(&p->fields, i) : "(not set)");
+        if (!p->is_self && can_invite(m))
+            snprintf(lines[count++], 768, "Invite target: #%s", m->rooms[m->active_room].name);
         int total = 0, visible = h - 5;
         for (int i = 0; i < count; i++)
             total += text_wrap_rows(lines[i], w - 4);
@@ -273,6 +290,8 @@ void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
             button(ui, win, &buttons_row, &col, w, buddy ? "[Unbuddy]" : "[Add buddy]", 2,
                    ui->profile_focus == focus++);
         }
+        if (!p->is_self && can_invite(m))
+            button(ui, win, &buttons_row, &col, w, "[Invite]", 7, ui->profile_focus == focus++);
         button(ui, win, &buttons_row, &col, w, "[Refresh]", 3, ui->profile_focus == focus++);
         button(ui, win, &buttons_row, &col, w, "[Close]", 4, ui->profile_focus == focus);
     }

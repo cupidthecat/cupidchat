@@ -11,7 +11,7 @@
 #define ROOM_ACCESS_PAGE 64
 
 typedef struct {
-    char account[33], inviter[33];
+    char account[33], inviter[33], reason[257];
     uint8_t flags;
     uint64_t invited_at;
 } room_access_t;

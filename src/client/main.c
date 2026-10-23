@@ -28,6 +28,7 @@
 #include "client/client_conn.h"
 #include "client/history.h"
 #include "client/model.h"
+#include "client/room_flow.h"
 #include "client/ui.h"
 #include "proto/frame.h"
 #include "proto/room_tools.h"
@@ -297,6 +298,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
     const uint8_t *p = f->payload;
     uint32_t pl = f->hdr.length;
 
+    if (room_control_frame(ctx->ui, m, cc, f))
+        return;
     if (board_frame(ctx->ui, m, cc, f))
         return;
     switch ((server_msg_t)f->hdr.type) {
@@ -356,6 +359,16 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_u8(p, pl, TAG_IS_ADMIN, &admin);
             tlv_read_u8(p, pl, TAG_MUTED, &muted);
             m->is_admin = admin != 0;
+            for (int i = 0; i < m->room_count; i++) {
+                if (m->is_admin)
+                    m->rooms[i].room_role |= ROOM_ADMIN;
+                else
+                    m->rooms[i].room_role &= (uint8_t)~ROOM_ADMIN;
+            }
+            if (m->is_admin)
+                ctx->ui->room_control.info.role |= ROOM_ADMIN;
+            else
+                ctx->ui->room_control.info.role &= (uint8_t)~ROOM_ADMIN;
             m->is_muted = muted != 0;
             if (m->is_muted)
                 model_set_status(m, "Your account is muted", 999);
@@ -898,6 +911,7 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 false;
             ui->show_poll = ui->poll_pending = ui->poll_requested = false;
             explicit_bzero(&ui->board, sizeof(ui->board));
+            explicit_bzero(&ui->room_control, sizeof(ui->room_control));
             ui->profile_discard = false;
             memset(&ui->profile, 0, sizeof(ui->profile));
             explicit_bzero(&ui->profile_draft, sizeof(ui->profile_draft));
@@ -1079,6 +1093,10 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
         }
     }
 
+    if (room_control_command(ui, m, cc, cmd)) {
+        ui->dirty = true;
+        return;
+    }
     if (!strcmp(cmd, "board") || !strcmp(cmd, "bbs")) {
         board_action(ui, m, cc, UI_BOARD_OPEN);
     } else if (!strcmp(cmd, "admin") || !strncmp(cmd, "admin ", 6)) {
@@ -1564,6 +1582,16 @@ int main(int argc, char **argv) {
                 g_quit = 1;
                 break;
             }
+            if (kr >= UI_ROOM_OPEN && kr <= UI_ROOM_REFRESH) {
+                room_control_action(&ui, &model, &cc, kr);
+                continue;
+            }
+            if (kr == UI_PROFILE_INVITE) {
+                if (model.active_room >= 0 && ui.profile.account[0])
+                    room_control_send(&ui, &model, &cc, model.rooms[model.active_room].name,
+                                      "invite", ui.profile.account, "", false, true);
+                continue;
+            }
             if (kr >= UI_BOARD_OPEN && kr <= UI_BOARD_LOCK) {
                 board_action(&ui, &model, &cc, kr);
                 continue;
@@ -1714,9 +1742,9 @@ int main(int argc, char **argv) {
                 /* regular keystroke -  send typing notification (throttled) */
                 time_t now = time(NULL);
                 if (model.status == CLI_ONLINE && !model.is_muted && !ui.show_profile &&
-                    !ui.show_poll && !ui.board.visible && !ui.show_buddies_modal &&
-                    !ui.show_help_modal && model.active_room >= 0 && ui.input_len > 0 &&
-                    now - last_typing_sent >= 2) {
+                    !ui.show_poll && !ui.board.visible && !ui.room_control.visible &&
+                    !ui.show_buddies_modal && !ui.show_help_modal && model.active_room >= 0 &&
+                    ui.input_len > 0 && now - last_typing_sent >= 2) {
                     const char *room = model.rooms[model.active_room].name;
                     client_send_typing(&cc, room);
                     last_typing_sent = now;

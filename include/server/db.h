@@ -3,10 +3,11 @@
 #include "proto/admin.h"
 #include "proto/bbs.h"
 #include "proto/profile.h"
+#include "proto/room_tools.h"
 #include <stdbool.h>
 #include <stdint.h>
 typedef struct cupid_db cupid_db_t;
-typedef void (*db_room_cb)(void *, const char *, const char *, uint64_t);
+typedef void (*db_room_cb)(void *, const char *, const char *, uint64_t, bool);
 typedef void (*db_msg_cb)(void *, uint32_t, const char *, const char *, uint64_t);
 
 cupid_db_t *db_open(const char *path);
@@ -58,3 +59,14 @@ int db_bbs_post(cupid_db_t *db, uint64_t account, uint64_t *thread, const char *
                 const char *body, uint64_t *post);
 int db_bbs_delete(cupid_db_t *db, uint64_t account, bool admin, uint64_t post, uint64_t *thread);
 int db_bbs_flags(cupid_db_t *db, uint64_t thread, const char *setting, bool value);
+
+int db_init_room_tools(cupid_db_t *db);
+int db_room_access(cupid_db_t *db, const char *room, uint64_t account, room_access_t *access);
+int db_room_access_list(cupid_db_t *db, const char *room, bool manager, room_info_t *info);
+int db_room_access_update(cupid_db_t *db, const char *room, uint64_t account, const char *action,
+                          const char *reason);
+int db_room_invite(cupid_db_t *db, const char *room, uint64_t target, uint64_t inviter);
+int db_room_clear_invite(cupid_db_t *db, const char *room, uint64_t account);
+typedef void (*db_invite_cb)(void *, const char *, const char *);
+int db_room_invites(cupid_db_t *db, uint64_t account, db_invite_cb callback, void *ctx);
+int db_room_topic_lock(cupid_db_t *db, const char *room, bool enabled);

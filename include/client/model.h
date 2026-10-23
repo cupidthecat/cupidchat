@@ -2,6 +2,7 @@
 #pragma once
 #include "proto/admin.h"
 #include "proto/profile.h"
+#include "proto/room_tools.h"
 #include "proto/types.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -28,7 +29,9 @@ typedef struct {
 
 typedef struct {
     char name[CLI_ROOM_MAX], topic[257], topic_set_by[CLI_NICK_MAX];
-    bool active, joined;
+    bool active, joined, topic_locked;
+    uint8_t room_role;
+    char owner_account[33], invite_from[33];
     uint32_t owner_uid;
     cli_msg_t *msgs;
     int msgs_cap, msgs_head, msgs_len, unread, scroll_offset;

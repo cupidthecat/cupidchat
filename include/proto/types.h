@@ -14,6 +14,7 @@
 #define CAP_ADMIN 0x00000010u
 #define CAP_POLLS 0x00000020u
 #define CAP_BBS 0x00000040u
+#define CAP_ROOM_TOOLS 0x00000080u
 #define MAX_BUDDIES 64
 
 /* Shared wire values. Rebuild clients with these recovered headers:
@@ -51,6 +52,7 @@ typedef enum {
     CMSG_BBS_POST = 0x0073,
     CMSG_BBS_DELETE = 0x0074,
     CMSG_BBS_FLAGS = 0x0075,
+    CMSG_ROOM_CONTROL = 0x0080,
     CMSG_FILE_OFFER = 0x0100,
     CMSG_FILE_ACCEPT = 0x0101,
     CMSG_FILE_DECLINE = 0x0102,
@@ -91,7 +93,10 @@ typedef enum {
     SMSG_BBS_LIST = 0x8071,
     SMSG_BBS_THREAD = 0x8072,
     SMSG_BBS_SAVED = 0x8073,
-    SMSG_BBS_CHANGED = 0x8074
+    SMSG_BBS_CHANGED = 0x8074,
+    SMSG_ROOM_INFO = 0x8080,
+    SMSG_ROOM_INVITE = 0x8081,
+    SMSG_ROOM_KICKED = 0x8082
 } server_msg_t;
 
 typedef enum {
@@ -150,7 +155,12 @@ typedef enum {
     TAG_PINNED = 0x007b,
     TAG_OLDER = 0x007c,
     TAG_NEWER = 0x007d,
-    TAG_ENTRY = 0x007e
+    TAG_ENTRY = 0x007e,
+    TAG_TOPIC_LOCK = 0x0080,
+    TAG_ROOM_ROLE = 0x0081,
+    TAG_ROOM_OWNER = 0x0082,
+    TAG_ENABLED = 0x0083,
+    TAG_BANNED = 0x0084
 } tlv_tag_t;
 
 typedef enum {

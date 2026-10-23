@@ -37,7 +37,7 @@ static void hydrate_msg_cb(void *ud, uint32_t uid, const char *nick, const char 
 
 /* fired once per room row; creates the room and loads its history */
 static void hydrate_room_cb(void *ud, const char *name, const char *topic,
-                            uint64_t owner_account_id) {
+                            uint64_t owner_account_id, bool topic_locked) {
     server_state_t *s = (server_state_t *)ud;
 
     if (s->room_count >= MAX_ROOMS)
@@ -46,6 +46,7 @@ static void hydrate_room_cb(void *ud, const char *name, const char *topic,
     if (!room)
         return;
     room->owner_account_id = owner_account_id;
+    room->topic_locked = topic_locked;
     int ri = s->room_count++;
     s->rooms[ri] = room;
 
