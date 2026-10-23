@@ -24,6 +24,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 - ncurses TUI: room sidebar, topic bar, chat pane, status bar, user list
 - Rooms and direct messages (DMs) with separate scroll state per conversation
 - Keyboard input wakes the client immediately; draft edits redraw only the input line
+- Network redraws are batched at roughly 60 updates per second; local input paints immediately
 - Cached message wrapping and visible-row rendering for scrolling through retained history
 - Nonblocking outgoing queue capped at 256 KiB, with partial-write handling
 - Clickable account profiles and a public profile editor (F7 or `/profile`)
@@ -286,6 +287,8 @@ terminal. Hold Shift while dragging if your terminal uses that to select text.
 Escape waits up to 50 ms for the rest of a function-key or mouse sequence before
 closing a dialog. Set `ESCDELAY` to choose a different timeout in milliseconds.
 Form edits redraw the dialog; chat updates continue behind it.
+Busy chat updates share a redraw without delaying keyboard input or discarding messages.
+If the connection closes, its last status remains in the terminal after the UI exits.
 
 Each room and DM retains up to 500 messages during the session. Page Up,
 Page Down, and the mouse wheel move through wrapped lines. New messages

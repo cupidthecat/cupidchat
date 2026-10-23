@@ -177,26 +177,32 @@ int conn_enqueue_shared(conn_t *c, conn_shared_frame_t *frame, uint16_t flags,
 }
 
 int conn_flush(conn_t *c) {
-    while (c->obuf_head) {
+    /* Keep writable queues scheduled after yielding to other connections. */
+    size_t flushed = 0;
+    while (c->obuf_head && flushed < 65536) {
         obuf_node_t *node = c->obuf_head;
         size_t remaining = node->len - node->sent;
 
         ssize_t n;
-        if (c->transport->writev && node->next) {
+        if (c->transport->writev) {
             /* Keep frame buffers in queue order, including any partial head. */
             struct iovec iov[32];
             int count = 0;
             size_t bytes = 0;
-            for (obuf_node_t *part = node; part && count < 32 && bytes < 65536; part = part->next) {
+            size_t budget = 65536 - flushed;
+            for (obuf_node_t *part = node; part && count < 32 && bytes < budget;
+                 part = part->next) {
                 size_t length = part->len - part->sent;
-                if (length > 65536 - bytes)
-                    length = 65536 - bytes;
+                if (length > budget - bytes)
+                    length = budget - bytes;
                 iov[count++] = (struct iovec){part->data + part->sent, length};
                 bytes += length;
             }
             n = c->transport->writev(c->transport, iov, count);
         } else {
             /* TLS and transports without scatter/gather keep their write path. */
+            if (c->transport->mode == TRANSPORT_PLAIN && remaining > 65536 - flushed)
+                remaining = 65536 - flushed;
             n = c->transport->write(c->transport, node->data + node->sent, remaining);
         }
         if (n < 0) {
@@ -210,6 +216,7 @@ int conn_flush(conn_t *c) {
             return -1; /* EOF */
 
         c->obuf_bytes -= (size_t)n;
+        flushed += (size_t)n;
         size_t written = (size_t)n;
         while (written && c->obuf_head) {
             node = c->obuf_head;
