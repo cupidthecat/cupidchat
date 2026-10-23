@@ -16,6 +16,7 @@ typedef enum {
     SND_PROFILE_SAVED,
     SND_NOTICE,
     SND_BOARD,
+    SND_INVITE,
     SND_COUNT
 } sound_id_t;
 

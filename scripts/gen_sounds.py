@@ -30,6 +30,7 @@ SOUNDS = [
     ("ProfileSaved.wav",    "profile_saved"),
     ("Notice.wav",          "notice"),
     ("Board.wav",           "board"),
+    ("Invite.wav",          "invite"),
 ]
 
 HEADER_BANNER = """\

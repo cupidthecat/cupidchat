@@ -2,6 +2,7 @@
 #pragma once
 #include "client/board.h"
 #include "client/model.h"
+#include "client/room_tools.h"
 
 typedef struct {
     int rows, cols, rooms_w, users_w, chat_w, chat_h;
@@ -27,6 +28,7 @@ enum {
     UI_PROFILE_MESSAGE,
     UI_PROFILE_BUDDY,
     UI_PROFILE_REFRESH,
+    UI_PROFILE_INVITE,
     UI_POLL_OPEN,
     UI_POLL_VOTE,
     UI_BOARD_OPEN,
@@ -38,12 +40,16 @@ enum {
     UI_BOARD_DELETE,
     UI_BOARD_PIN,
     UI_BOARD_LOCK,
+    UI_ROOM_OPEN,
+    UI_ROOM_RUN,
+    UI_ROOM_REFRESH,
     UI_QUIT
 };
 
 typedef struct {
     ui_layout_t layout;
     board_state_t board;
+    room_control_state_t room_control;
     void *win_topbar, *win_topic, *win_rooms, *win_chat, *win_users, *win_input;
     bool show_users, dirty, show_help_modal, show_emoji_modal, show_buddies_modal, confirm_quit;
     bool show_poll, poll_pending;
@@ -106,3 +112,7 @@ void ui_redraw_poll(ui_state_t *ui, const cli_model_t *m);
 int ui_board_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
                    bool printable);
 void ui_redraw_board(ui_state_t *ui, const cli_model_t *m);
+
+int ui_room_control_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
+                          bool printable);
+void ui_redraw_room_control(ui_state_t *ui, const cli_model_t *m);

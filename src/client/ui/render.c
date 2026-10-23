@@ -159,7 +159,16 @@ void ui_redraw_rooms(ui_state_t *ui, const cli_model_t *m) {
         char label[96];
         if (room) {
             const cli_room_t *r = &m->rooms[index];
-            char marker = !r->joined ? '+' : r->owner_uid && r->owner_uid == m->user_id ? '~' : '#';
+            char marker = '#';
+            if (!r->joined)
+                marker = (r->room_role & ROOM_BANNED) && !(r->room_role & (ROOM_OWNER | ROOM_ADMIN))
+                             ? 'X'
+                         : r->room_role & ROOM_INVITED ? '!'
+                                                       : '+';
+            else if ((r->room_role & ROOM_OWNER) || (r->owner_uid && r->owner_uid == m->user_id))
+                marker = '~';
+            else if (r->room_role & ROOM_OPERATOR)
+                marker = '@';
             if (r->unread)
                 snprintf(label, sizeof(label), "%c(%d) %.64s", marker, r->unread, r->name);
             else
@@ -446,6 +455,12 @@ static const char *HELP_LINES[] = {"  ACCOUNT",
                                    "",
                                    "  ROOMS  (~name = room you own, deletable)",
                                    "  /join  <room>             Join or create a room",
+                                   "  F11 /room                Room controls",
+                                   "  /invite <account> [room]  Invite an account",
+                                   "  /op /deop <account>       Grant/remove operator",
+                                   "  /kick /ban /unban <account> [reason]",
+                                   "  /mode +t or -t            Lock/unlock topics",
+                                   "  /decline [room]           Decline an invitation",
                                    "  /leave [room]             Leave current or named room",
                                    "  /topic [text]             Set or show room topic",
                                    "  /delroom [room]           Delete a room you own",
@@ -625,7 +640,9 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         return;
     }
     mvaddnstr(ui->layout.rows - 2, 0,
-              ui->layout.cols >= 66
+              ui->layout.cols >= 73
+                  ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies] [Profile] [BBS] [Room]"
+              : ui->layout.cols >= 66
                   ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies] [Profile] [BBS]"
               : ui->layout.cols >= 59 ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies] [Profile]"
               : ui->layout.cols >= 49 ? "[Close] [Help] [Latest] [Quit] [Emoji] [Buddies]"
@@ -646,6 +663,8 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
         ui_redraw_buddies_modal(ui, m);
     if (ui->board.visible)
         ui_redraw_board(ui, m);
+    if (ui->room_control.visible)
+        ui_redraw_room_control(ui, m);
     if (ui->show_profile)
         ui_redraw_profile(ui, m);
     if (ui->show_poll)

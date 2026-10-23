@@ -59,7 +59,7 @@ SOUNDS_GEN_H := include/client/sounds_data.h
 SOUNDS_WAVS  := sounds/Welcome.wav sounds/Goodbye.wav \
                 sounds/IM.wav sounds/BuddyIn.wav sounds/BuddyOut.wav \
                 sounds/Mention.wav sounds/Error.wav sounds/Topic.wav \
-                sounds/BuddyOnline.wav sounds/BuddyOffline.wav sounds/ProfileSaved.wav sounds/Notice.wav sounds/Board.wav
+                sounds/BuddyOnline.wav sounds/BuddyOffline.wav sounds/ProfileSaved.wav sounds/Notice.wav sounds/Board.wav sounds/Invite.wav
 
 $(SOUNDS_GEN_C) $(SOUNDS_GEN_H) &: $(SOUNDS_WAVS) scripts/gen_sounds.py
 	@echo "  GEN  sounds_data"
@@ -71,6 +71,7 @@ SHARED_SRC := \
     $(SHDIR)/proto/tlv.c   \
     $(SHDIR)/proto/profile.c \
     $(SHDIR)/proto/bbs.c \
+    $(SHDIR)/proto/room_tools.c \
     $(SHDIR)/net/transport_posix.c
 
 ifeq ($(TLS),1)
@@ -96,11 +97,13 @@ SERVER_SRC := \
     $(SRVDIR)/core/profiles.c \
     $(SRVDIR)/core/admin.c \
     $(SRVDIR)/core/bbs.c \
+    $(SRVDIR)/core/room_tools.c \
     $(SRVDIR)/util/log.c      \
     $(SRVDIR)/util/config.c   \
     $(SRVDIR)/db/db.c \
     $(SRVDIR)/db/admin.c \
-    $(SRVDIR)/db/bbs.c
+    $(SRVDIR)/db/bbs.c \
+    $(SRVDIR)/db/room_tools.c
 
 SERVER_OBJ := $(patsubst src/%.c, $(BUILDDIR)/%.o, $(SERVER_SRC))
 SERVER_BIN := cupid-chatd
@@ -111,6 +114,7 @@ CLIENT_SRC := \
     $(CLIDIR)/net/client_conn.c    \
     $(CLIDIR)/state/model.c        \
     $(CLIDIR)/state/board.c        \
+    $(CLIDIR)/state/room_tools.c   \
     $(CLIDIR)/state/history.c      \
     $(CLIDIR)/state/text.c         \
     $(CLIDIR)/ui/layout.c          \
@@ -121,6 +125,7 @@ CLIENT_SRC := \
     $(CLIDIR)/ui/profiles.c        \
     $(CLIDIR)/ui/polls.c           \
     $(CLIDIR)/ui/board.c           \
+    $(CLIDIR)/ui/room_tools.c      \
     $(CLIDIR)/sound.c        \
     $(SOUNDS_GEN_C)
 
@@ -182,8 +187,8 @@ $(BUILDDIR)/tests/client/test_ui: $(TESTDIR)/client/test_ui.c \
     $(BUILDDIR)/client/state/model.o $(BUILDDIR)/client/state/history.o \
     $(BUILDDIR)/client/state/text.o \
     $(BUILDDIR)/client/ui/layout.o $(BUILDDIR)/client/ui/input.o \
-    $(BUILDDIR)/client/ui/render.o $(BUILDDIR)/client/ui/forms.o $(BUILDDIR)/client/ui/auth.o $(BUILDDIR)/client/ui/profiles.o $(BUILDDIR)/client/ui/polls.o $(BUILDDIR)/client/ui/board.o \
-    $(BUILDDIR)/shared/proto/profile.o $(BUILDDIR)/shared/proto/tlv.o $(BUILDDIR)/shared/proto/bbs.o
+    $(BUILDDIR)/client/ui/render.o $(BUILDDIR)/client/ui/forms.o $(BUILDDIR)/client/ui/auth.o $(BUILDDIR)/client/ui/profiles.o $(BUILDDIR)/client/ui/polls.o $(BUILDDIR)/client/ui/board.o $(BUILDDIR)/client/ui/room_tools.o \
+    $(BUILDDIR)/shared/proto/profile.o $(BUILDDIR)/shared/proto/tlv.o $(BUILDDIR)/shared/proto/bbs.o $(BUILDDIR)/shared/proto/room_tools.o
 	$(CC) $(CFLAGS) $(filter %.c %.o,$^) -o $@ -lncursesw
 
 clean:

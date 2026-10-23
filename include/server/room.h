@@ -15,7 +15,7 @@ typedef struct {
 
 typedef struct {
     char name[MAX_ROOM_LEN + 1], topic[256], topic_set_by[MAX_NICK_LEN + 1];
-    bool active;
+    bool active, topic_locked;
     uint32_t owner_uid;
     uint64_t owner_account_id;
     int member_fds[ROOM_MEMBER_SLOTS], member_count;

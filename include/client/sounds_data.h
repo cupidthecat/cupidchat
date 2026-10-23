@@ -63,3 +63,7 @@ extern const uint8_t snd_notice_data[];
 /* board — 11068 bytes */
 extern const uint8_t snd_board_data[];
 #define snd_board_size 11068U
+
+/* invite — 13274 bytes */
+extern const uint8_t snd_invite_data[];
+#define snd_invite_size 13274U

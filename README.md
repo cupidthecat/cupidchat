@@ -7,6 +7,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 **Server**
 
 - `epoll`-based event loop with `timerfd` keepalive
+- Persistent room operators, account bans, topic locks, and room invitations
 - Persistent BBS threads and replies, unread markers, and clickable author profiles
 - Persistent account moderation, admin roles, editable MOTD and banners, and server polls
 - Required account sign-in; guest connections cannot access chat
@@ -256,6 +257,7 @@ assign those rooms after checking ownership; see [deployment](deploy/README.md).
 | `F7` | Open your profile |
 | `F8` | Open the latest server poll |
 | `F9` | Open the BBS board |
+| `F11` | Open controls for the active room |
 | `F10` / `Ctrl+Q` | Open quit confirmation; Enter quits, Esc cancels |
 | `Ctrl+L` | Redraw the terminal |
 
@@ -306,6 +308,54 @@ Messages sent from an existing DM or `/reply` include its peer's session ID.
 The server rejects a message if someone else has taken that nickname. Reopen
 the DM after a buddy reconnects. Explicit `/dm <nick> <message>` still addresses
 the current holder of that nickname.
+
+### IRC room tools
+
+F11, `/room`, the Room footer button, or a click on the room's topic bar opens
+its controls. `/roominfo <room>` opens another room's controls. Account and
+Reason fields keep their text while you view a profile. Tab changes focus;
+Left/Right on the action selector chooses an available action. Run or Enter
+submits it. Refresh updates the access list, and Esc closes the window.
+Click an account in the list, choose Profile, or use F7 to view its profile.
+The window shows up to 64 access entries; commands can target any account by name.
+
+| Command | Action |
+|---------|--------|
+| `/op <account>` | Give the account operator rights in this room |
+| `/deop <account>` | Remove assigned operator rights |
+| `/mode +t` | Let only operators, the owner, and server admins change the topic |
+| `/mode -t` | Let all room members change the topic |
+| `/kick <account> [reason]` | Remove an online member; it can join again |
+| `/ban <account> [reason]` | Save a room ban and remove the account if present |
+| `/unban <account>` | Remove the room ban |
+| `/invite <account> [room]` | Invite an account to the current or named room |
+| `/decline [room]` | Clear a pending invitation for the current or named room |
+
+Room owners and server admins grant or remove operators and set topic locks.
+Operators can invite accounts, kick ordinary members, and ban or unban them.
+A room operator cannot kick or ban another operator; the owner or a server
+admin can. Room owners and server admins retain their rights and are protected
+from room kicks and bans. Moderation targets persistent account names, so a
+nickname change or reconnect does not bypass a ban or lose operator rights.
+Room bans affect that room; the account can continue chatting elsewhere.
+
+Rooms stay in the public directory. Invitations point accounts to a room, and
+room bans still apply. A new online invitation plays its own tone. Offline
+accounts receive a quiet reminder when they sign in. Pending invitations stay
+until the account joins or declines. An account can have up to 64 pending
+invitations; repeating a pending invitation has a 30-second cooldown. Muted
+accounts cannot send invitations.
+
+On another account's profile, Invite sends an invitation to your active joined
+room when you have permission. The card shows that room's name. The sidebar
+uses `!` for invited rooms, `@` for rooms where you are an operator, and `X` for
+rooms you cannot join because of a ban. Your owned rooms keep the `~` marker.
+
+Operator rights, room bans, ban reasons, and topic locks survive server
+restarts. Ordinary accounts can see the operator list; managers can also see
+bans, reasons, and pending invitations. Selecting a banned account loads its
+saved reason into the Reason field. Reasons allow 256 UTF-8 bytes. Topics allow
+255 UTF-8 bytes; malformed or oversized room targets and topics are rejected.
 
 ### BBS board
 

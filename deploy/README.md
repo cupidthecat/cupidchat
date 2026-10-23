@@ -113,6 +113,18 @@ The server advertises board support in its capability response. Use
 an updated client for F9 and `/board`; older clients can still use live chat.
 No additional listener, port, or service is needed.
 
+### Room operators and invitations
+
+Startup adds `rooms.topic_locked` with a default of zero and creates
+`room_access`. Existing rooms keep their current topic behavior. The access
+table stores operator assignments, room bans and reasons, and pending
+invitations using persistent account IDs. Include it in database backups.
+Deleting a room removes its access records through a foreign key cascade.
+
+Use an updated client for F11 and profile invitations. Older clients can keep
+using live chat; the server enforces room bans and topic permissions for all
+clients. The service, listener, database path, and Tailscale proxy stay the same.
+
 ### Ownership migration
 
 Back up the database with SQLite's backup API before upgrading. The schema adds

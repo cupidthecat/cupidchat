@@ -138,7 +138,10 @@ int db_init_schema(cupid_db_t *db) {
         ensure_room_column(
             db, "owner_account_id",
             "ALTER TABLE rooms ADD COLUMN owner_account_id INTEGER REFERENCES users(id)") < 0 ||
-        db_init_admin(db) < 0 || db_init_bbs(db) < 0 ||
+        ensure_room_column(db, "topic_locked",
+                           "ALTER TABLE rooms ADD COLUMN topic_locked INTEGER NOT NULL DEFAULT 0") <
+            0 ||
+        db_init_admin(db) < 0 || db_init_bbs(db) < 0 || db_init_room_tools(db) < 0 ||
         sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
         LOG_ERROR("db_init_schema: %s", sqlite3_errmsg(db->handle));
         sqlite3_exec(db->handle, "ROLLBACK", NULL, NULL, NULL);
@@ -273,7 +276,8 @@ void db_persist_dm(cupid_db_t *db, uint32_t from_uid, const char *from_nick, uin
 /* Reads */
 
 void db_load_rooms(cupid_db_t *db, db_room_cb cb, void *userdata) {
-    const char *sql = "SELECT name, topic, owner_account_id FROM rooms ORDER BY id ASC;";
+    const char *sql =
+        "SELECT name, topic, owner_account_id, topic_locked FROM rooms ORDER BY id ASC;";
 
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK) {
@@ -285,7 +289,8 @@ void db_load_rooms(cupid_db_t *db, db_room_cb cb, void *userdata) {
         const char *topic = (const char *)sqlite3_column_text(stmt, 1);
         uint64_t owner_account_id = (uint64_t)sqlite3_column_int64(stmt, 2);
         if (name)
-            cb(userdata, name, topic ? topic : "", owner_account_id);
+            cb(userdata, name, topic ? topic : "", owner_account_id,
+               sqlite3_column_int(stmt, 3) != 0);
     }
     sqlite3_finalize(stmt);
 }
