@@ -207,12 +207,12 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
             return UI_QUIT;
         if (ch == 27 || ch == 'n' || ch == 'N')
             ui->confirm_quit = false;
-        ui->dirty = true;
+        ui->modal_dirty = true;
         return UI_NONE;
     }
 
     if (ch == KEY_F(10) || ch == 0x11) {
-        ui->confirm_quit = ui->dirty = true;
+        ui->confirm_quit = ui->modal_dirty = true;
         return UI_NONE;
     }
     if (ui->show_profile)
@@ -234,7 +234,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
             insert_text(ui, EMOJIS[ui->emoji_cursor].glyph);
             ui->show_emoji_modal = false;
         }
-        ui->dirty = true;
+        ui->modal_dirty = true;
         return UI_NONE;
     }
 
@@ -277,7 +277,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
             return UI_BUDDY_OPEN;
         else if ((ch == '\n' || ch == KEY_ENTER) && m->buddy_count)
             return UI_BUDDY_SELECT;
-        ui->dirty = true;
+        ui->modal_dirty = true;
         return UI_NONE;
     }
 
@@ -290,7 +290,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                 ui->help_offset--;
         } else
             ui->show_help_modal = false;
-        ui->dirty = true;
+        ui->modal_dirty = true;
         return 0;
     }
 

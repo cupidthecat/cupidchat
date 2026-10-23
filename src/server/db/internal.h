@@ -7,6 +7,9 @@ typedef enum {
     DB_STMT_DM,
     DB_STMT_CONTROLS,
     DB_STMT_ROOM_ACCESS,
+    DB_STMT_PROFILE_ID,
+    DB_STMT_PROFILE_NAME,
+    DB_STMT_BUDDIES,
     DB_STMT_COUNT
 } db_statement_id_t;
 

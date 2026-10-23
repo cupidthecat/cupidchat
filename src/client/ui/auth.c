@@ -5,6 +5,7 @@
 #include <string.h>
 
 void ui_auth_clear_secrets(ui_state_t *ui) {
+    ui->auth_deferred = false;
     explicit_bzero(ui->auth_password, sizeof(ui->auth_password));
     explicit_bzero(ui->auth_confirm, sizeof(ui->auth_confirm));
     ui->auth_cursors[1] = ui->auth_cursors[2] = 0;
@@ -35,7 +36,7 @@ static char *field(ui_state_t *ui, int index) {
 }
 
 int ui_auth_input(ui_state_t *ui, int key, uint32_t character, bool printable) {
-    ui->dirty = true;
+    ui->modal_dirty = true;
     if (key == 0x11 || key == KEY_F(10))
         return UI_QUIT;
     if (ui->auth_pending)
@@ -101,7 +102,7 @@ int ui_auth_input(ui_state_t *ui, int key, uint32_t character, bool printable) {
 void ui_redraw_auth(ui_state_t *ui, const cli_model_t *m) {
     int h, w, y, x, first;
     geometry(ui, &h, &w, &y, &x, &first);
-    WINDOW *window = newwin(h, w, y, x);
+    WINDOW *window = ui_modal_window(ui, UI_MODAL_AUTH, h, w, y, x);
     if (!window)
         return;
     box(window, 0, 0);
@@ -155,5 +156,4 @@ void ui_redraw_auth(ui_state_t *ui, const cli_model_t *m) {
     if (cursor_row >= 0)
         wmove(window, cursor_row, cursor_column);
     wnoutrefresh(window);
-    delwin(window);
 }

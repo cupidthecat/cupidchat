@@ -526,7 +526,7 @@ static void ui_redraw_help_modal(ui_state_t *ui) {
     int starty = (rows - box_h) / 2;
     int startx = (cols - box_w) / 2;
 
-    WINDOW *w = newwin(box_h, box_w, starty, startx);
+    WINDOW *w = ui_modal_window(ui, UI_MODAL_HELP, box_h, box_w, starty, startx);
     if (!w)
         return;
 
@@ -555,7 +555,6 @@ static void ui_redraw_help_modal(ui_state_t *ui) {
 
     wattroff(w, COLOR_PAIR(CP_TOPBAR));
     wnoutrefresh(w);
-    delwin(w);
 }
 
 static void ui_redraw_emoji_modal(ui_state_t *ui) {
@@ -565,8 +564,8 @@ static void ui_redraw_emoji_modal(ui_state_t *ui) {
         height = EMOJI_COUNT + 4;
     int visible = height - 4;
     int first = ui->emoji_cursor / visible * visible;
-    WINDOW *w =
-        newwin(height, width, (ui->layout.rows - height) / 2, (ui->layout.cols - width) / 2);
+    WINDOW *w = ui_modal_window(ui, UI_MODAL_EMOJI, height, width, (ui->layout.rows - height) / 2,
+                                (ui->layout.cols - width) / 2);
     if (!w)
         return;
     box(w, 0, 0);
@@ -581,7 +580,6 @@ static void ui_redraw_emoji_modal(ui_state_t *ui) {
     }
     mvwaddstr(w, height - 2, 2, "Arrows choose; Enter adds; Esc");
     wnoutrefresh(w);
-    delwin(w);
 }
 
 static void ui_redraw_buddies_modal(ui_state_t *ui, const cli_model_t *m) {
@@ -597,8 +595,8 @@ static void ui_redraw_buddies_modal(ui_state_t *ui, const cli_model_t *m) {
     if (ui->buddy_cursor >= m->buddy_count)
         ui->buddy_cursor = m->buddy_count ? m->buddy_count - 1 : 0;
     int first = ui->buddy_cursor / visible * visible;
-    WINDOW *w =
-        newwin(height, width, (ui->layout.rows - height) / 2, (ui->layout.cols - width) / 2);
+    WINDOW *w = ui_modal_window(ui, UI_MODAL_BUDDIES, height, width, (ui->layout.rows - height) / 2,
+                                (ui->layout.cols - width) / 2);
     if (!w)
         return;
     box(w, 0, 0);
@@ -621,19 +619,71 @@ static void ui_redraw_buddies_modal(ui_state_t *ui, const cli_model_t *m) {
         draw_text(w, height - 3, 2, m->buddies[ui->buddy_cursor].away_msg, width - 4);
     draw_text(w, height - 2, 2, "Enter: DM | P/click: profile | R: refresh", width - 4);
     wnoutrefresh(w);
-    delwin(w);
+}
+
+static unsigned modal_mask(const ui_state_t *ui) {
+    const bool visible[UI_MODAL_COUNT] = {
+        ui->show_auth,          ui->show_help_modal, ui->show_emoji_modal,
+        ui->show_buddies_modal, ui->board.visible,   ui->room_control.visible,
+        ui->show_profile,       ui->show_poll,       ui->confirm_quit};
+    unsigned mask = 0;
+    for (int i = 0; i < UI_MODAL_COUNT; i++)
+        if (visible[i])
+            mask |= 1u << i;
+    return mask;
+}
+
+static void redraw_modals(ui_state_t *ui, cli_model_t *m) {
+    if (ui->show_help_modal)
+        ui_redraw_help_modal(ui);
+    if (ui->show_emoji_modal)
+        ui_redraw_emoji_modal(ui);
+    if (ui->show_buddies_modal)
+        ui_redraw_buddies_modal(ui, m);
+    if (ui->board.visible)
+        ui_redraw_board(ui, m);
+    if (ui->room_control.visible)
+        ui_redraw_room_control(ui, m);
+    if (ui->show_profile)
+        ui_redraw_profile(ui, m);
+    if (ui->show_poll)
+        ui_redraw_poll(ui, m);
+    if (ui->confirm_quit) {
+        int width = ui->layout.cols < 48 ? ui->layout.cols - 2 : 46;
+        WINDOW *dialog = ui_modal_window(ui, UI_MODAL_QUIT, 5, width, (ui->layout.rows - 5) / 2,
+                                         (ui->layout.cols - width) / 2);
+        if (dialog) {
+            box(dialog, 0, 0);
+            mvwaddnstr(dialog, 1, 2, "Quit CupidChat?", width - 4);
+            mvwaddnstr(dialog, 3, 2, "Enter: quit   Esc: keep chatting", width - 4);
+            wnoutrefresh(dialog);
+        }
+    }
 }
 
 /* Full redraw */
 
 void ui_redraw(ui_state_t *ui, cli_model_t *m) {
-    if (!ui->dirty && ui->input_dirty) {
+    unsigned modals = modal_mask(ui);
+    /* Local form input leaves the background intact. Transitions repaint it. */
+    if (!ui->dirty && ui->modal_dirty && modals && modals == ui->painted_modals &&
+        !ui->layout.too_small) {
+        if (ui->show_auth)
+            ui_redraw_auth(ui, m);
+        else
+            redraw_modals(ui, m);
+        doupdate();
+        ui->modal_dirty = ui->input_dirty = false;
+        return;
+    }
+    if (!ui->dirty && ui->input_dirty && !ui->modal_dirty && !modals && !ui->painted_modals) {
         ui_redraw_input(ui);
         doupdate();
         ui->input_dirty = false;
         return;
     }
-    ui->input_dirty = false;
+    ui->input_dirty = ui->modal_dirty = false;
+    ui->painted_modals = modals;
     erase();
     if (ui->layout.too_small) {
         mvaddnstr(0, 0, "Resize to at least 40x8. Ctrl+Q quits.", ui->layout.cols);
@@ -666,31 +716,7 @@ void ui_redraw(ui_state_t *ui, cli_model_t *m) {
     ui_redraw_rooms(ui, m);
     ui_redraw_users(ui, m);
     ui_redraw_input(ui);
-    if (ui->show_help_modal)
-        ui_redraw_help_modal(ui);
-    if (ui->show_emoji_modal)
-        ui_redraw_emoji_modal(ui);
-    if (ui->show_buddies_modal)
-        ui_redraw_buddies_modal(ui, m);
-    if (ui->board.visible)
-        ui_redraw_board(ui, m);
-    if (ui->room_control.visible)
-        ui_redraw_room_control(ui, m);
-    if (ui->show_profile)
-        ui_redraw_profile(ui, m);
-    if (ui->show_poll)
-        ui_redraw_poll(ui, m);
-    if (ui->confirm_quit) {
-        int width = ui->layout.cols < 48 ? ui->layout.cols - 2 : 46;
-        WINDOW *dialog = newwin(5, width, (ui->layout.rows - 5) / 2, (ui->layout.cols - width) / 2);
-        if (dialog) {
-            box(dialog, 0, 0);
-            mvwaddnstr(dialog, 1, 2, "Quit CupidChat?", width - 4);
-            mvwaddnstr(dialog, 3, 2, "Enter: quit   Esc: keep chatting", width - 4);
-            wnoutrefresh(dialog);
-            delwin(dialog);
-        }
-    }
+    redraw_modals(ui, m);
     doupdate();
     ui->dirty = false;
 }

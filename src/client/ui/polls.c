@@ -15,7 +15,7 @@ static void geometry(const ui_state_t *ui, int *h, int *w, int *y, int *x) {
 }
 
 int ui_poll_input(ui_state_t *ui, const cli_model_t *m, int key) {
-    ui->dirty = true;
+    ui->modal_dirty = true;
     if (key == 27) {
         ui->show_poll = false;
         return UI_NONE;
@@ -68,7 +68,7 @@ int ui_poll_input(ui_state_t *ui, const cli_model_t *m, int key) {
 void ui_redraw_poll(ui_state_t *ui, const cli_model_t *m) {
     int h, w, y, x;
     geometry(ui, &h, &w, &y, &x);
-    WINDOW *win = newwin(h, w, y, x);
+    WINDOW *win = ui_modal_window(ui, UI_MODAL_POLL, h, w, y, x);
     if (!win)
         return;
     box(win, 0, 0);
@@ -109,5 +109,4 @@ void ui_redraw_poll(ui_state_t *ui, const cli_model_t *m) {
     mvwaddnstr(win, h - 2, 2, "[Vote] [Refresh] [Close]", w - 4);
     mvwaddnstr(win, h - 1, 1, "Arrows: choose | PgUp/Dn: question | Esc", w - 2);
     wnoutrefresh(win);
-    delwin(win);
 }

@@ -283,6 +283,10 @@ the mouse wheel. The most recent status stays on the line above the footer.
 Mouse support depends on your
 terminal. Hold Shift while dragging if your terminal uses that to select text.
 
+Escape waits up to 50 ms for the rest of a function-key or mouse sequence before
+closing a dialog. Set `ESCDELAY` to choose a different timeout in milliseconds.
+Form edits redraw the dialog; chat updates continue behind it.
+
 Each room and DM retains up to 500 messages during the session. Page Up,
 Page Down, and the mouse wheel move through wrapped lines. New messages
 keep your place while you read older history. F4 or `/latest` returns to
