@@ -131,7 +131,6 @@ static void apply(cli_model_t *m, const room_info_t *info) {
 }
 
 bool room_control_frame(ui_state_t *ui, cli_model_t *m, client_conn_t *cc, const frame_t *f) {
-    (void)cc;
     const uint8_t *p = f->payload;
     uint32_t length = f->hdr.length;
     room_control_state_t *r = &ui->room_control;
@@ -195,8 +194,14 @@ bool room_control_frame(ui_state_t *ui, cli_model_t *m, client_conn_t *cc, const
             m->user_count = 0;
             m->users_room[0] = '\0';
         }
-        if (m->active_room >= 0 && !strcmp(m->rooms[m->active_room].name, room))
+        if (m->active_room >= 0 && !strcmp(m->rooms[m->active_room].name, room)) {
             model_select_fallback(m);
+            ui->nav_cursor = m->active_room >= 0 ? m->active_room
+                             : m->active_dm >= 0 ? m->room_count + m->active_dm
+                                                 : -1;
+        }
+        if (m->active_room >= 0)
+            client_send_list_users(cc, m->rooms[m->active_room].name);
         ui_clamp_navigation(ui, m);
         message(ui, m, text);
         sound_play(SND_ERROR);
