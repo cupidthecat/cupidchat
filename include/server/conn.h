@@ -20,8 +20,9 @@ typedef struct obuf_node {
     struct obuf_node *next;
 } obuf_node_t;
 
-typedef struct {
+typedef struct conn {
     int fd, epoll_fd;
+    struct conn *active_prev, *active_next;
     transport_t *transport;
     conn_state_t state;
     uint32_t user_id;
@@ -34,7 +35,7 @@ typedef struct {
     frame_parser_t parser;
     rate_bucket_t rate;
     time_t last_active, ping_sent_at, close_deadline, auth_started;
-    bool ping_pending, want_write;
+    bool ping_pending, want_write, read_pending;
     obuf_node_t *obuf_head, *obuf_tail;
     size_t obuf_bytes;
     int rooms[MAX_ROOMS_PER_USER], room_count;

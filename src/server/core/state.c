@@ -113,11 +113,10 @@ int server_state_init(server_state_t *s, const server_config_t *cfg) {
 }
 
 void server_state_free(server_state_t *s) {
-    for (int i = 0; i < s->conns_size; i++) {
-        if (s->conns[i]) {
-            conn_destroy(s->conns[i]);
-            s->conns[i] = NULL;
-        }
+    while (s->active_head) {
+        conn_t *c = s->active_head;
+        s->active_head = c->active_next;
+        conn_destroy(c);
     }
     for (int i = 0; i < s->room_count; i++) {
         if (s->rooms[i]) {
@@ -132,8 +131,13 @@ void server_state_free(server_state_t *s) {
 }
 
 void server_register_conn(server_state_t *s, conn_t *c) {
-    if (c->fd >= 0 && c->fd < s->conns_size) {
+    if (c->fd >= 0 && c->fd < s->conns_size && !s->conns[c->fd]) {
         s->conns[c->fd] = c;
+        c->active_prev = NULL;
+        c->active_next = s->active_head;
+        if (s->active_head)
+            s->active_head->active_prev = c;
+        s->active_head = c;
         s->conn_count++;
     }
 }
@@ -141,6 +145,13 @@ void server_register_conn(server_state_t *s, conn_t *c) {
 void server_unregister_conn(server_state_t *s, conn_t *c) {
     if (c->fd >= 0 && c->fd < s->conns_size && s->conns[c->fd] == c) {
         s->conns[c->fd] = NULL;
+        if (c->active_prev)
+            c->active_prev->active_next = c->active_next;
+        else
+            s->active_head = c->active_next;
+        if (c->active_next)
+            c->active_next->active_prev = c->active_prev;
+        c->active_prev = c->active_next = NULL;
         s->conn_count--;
     }
     if (c->account_id && !server_find_by_account(s, c->account_id))
@@ -156,8 +167,7 @@ void server_unregister_conn(server_state_t *s, conn_t *c) {
 }
 
 conn_t *server_find_by_nick(server_state_t *s, const char *nick) {
-    for (int i = 0; i < s->conns_size; i++) {
-        conn_t *c = s->conns[i];
+    for (conn_t *c = s->active_head; c; c = c->active_next) {
         if (c && c->state == CONN_AUTHED && strcmp(c->nick, nick) == 0)
             return c;
     }
@@ -165,8 +175,7 @@ conn_t *server_find_by_nick(server_state_t *s, const char *nick) {
 }
 
 conn_t *server_find_by_uid(server_state_t *s, uint32_t uid) {
-    for (int i = 0; i < s->conns_size; i++) {
-        conn_t *c = s->conns[i];
+    for (conn_t *c = s->active_head; c; c = c->active_next) {
         if (c && c->user_id == uid)
             return c;
     }
@@ -221,8 +230,7 @@ int server_get_or_create_room(server_state_t *s, const char *name, uint32_t owne
 conn_t *server_find_by_account(server_state_t *s, uint64_t account_id) {
     if (!account_id)
         return NULL;
-    for (int fd = 0; fd < s->conns_size; fd++) {
-        conn_t *c = s->conns[fd];
+    for (conn_t *c = s->active_head; c; c = c->active_next) {
         if (c && c->state == CONN_AUTHED && c->account_id == account_id)
             return c;
     }
@@ -301,8 +309,7 @@ int server_delete_room(server_state_t *s, int ri) {
     /* Strip membership from every client and broadcast SMSG_ROOM_DELETED
      * to all authenticated connections in one pass. */
     if (rlen > 0) {
-        for (int i = 0; i < s->conns_size; i++) {
-            conn_t *c = s->conns[i];
+        for (conn_t *c = s->active_head; c; c = c->active_next) {
             if (!c || c->state != CONN_AUTHED)
                 continue;
             conn_remove_room(c, ri); /* no-op if not a member */
@@ -316,8 +323,7 @@ int server_delete_room(server_state_t *s, int ri) {
         }
     } else {
         /* frame_encode failed; still strip membership */
-        for (int i = 0; i < s->conns_size; i++) {
-            conn_t *c = s->conns[i];
+        for (conn_t *c = s->active_head; c; c = c->active_next) {
             if (c && c->state == CONN_AUTHED)
                 conn_remove_room(c, ri);
         }

@@ -32,10 +32,10 @@ int db_init_admin(cupid_db_t *db) {
 
 int db_get_controls(cupid_db_t *db, uint64_t account, account_controls_t *flags) {
     memset(flags, 0, sizeof(*flags));
-    sqlite3_stmt *q = NULL;
-    if (sqlite3_prepare_v2(db->handle,
-                           "SELECT admin,muted,banned,reason FROM account_controls WHERE user_id=?",
-                           -1, &q, NULL) != SQLITE_OK)
+    sqlite3_stmt *q =
+        db_statement(db, DB_STMT_CONTROLS,
+                     "SELECT admin,muted,banned,reason FROM account_controls WHERE user_id=?");
+    if (!q)
         return -1;
     sqlite3_bind_int64(q, 1, (sqlite3_int64)account);
     int rc = sqlite3_step(q);
@@ -45,7 +45,7 @@ int db_get_controls(cupid_db_t *db, uint64_t account, account_controls_t *flags)
         flags->banned = sqlite3_column_int(q, 2) != 0;
         snprintf(flags->reason, sizeof(flags->reason), "%s", sqlite3_column_text(q, 3));
     }
-    sqlite3_finalize(q);
+    db_statement_release(q);
     return rc == SQLITE_ROW || rc == SQLITE_DONE ? 0 : -1;
 }
 

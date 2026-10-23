@@ -174,6 +174,8 @@ void db_seed_defaults(cupid_db_t *db) {
 void db_close(cupid_db_t *db) {
     if (!db)
         return;
+    for (int i = 0; i < DB_STMT_COUNT; i++)
+        sqlite3_finalize(db->statements[i]);
     sqlite3_close(db->handle);
     free(db);
 }
@@ -243,16 +245,17 @@ void db_persist_message(cupid_db_t *db, const char *room_name, uint32_t user_id,
     const char *sql = "INSERT INTO messages(room_name, user_id, nick, text, ts_ms)"
                       " VALUES(?, ?, ?, ?, ?);";
 
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
+    sqlite3_stmt *stmt = db_statement(db, DB_STMT_MESSAGE, sql);
+    if (!stmt)
         return;
     sqlite3_bind_text(stmt, 1, room_name, -1, SQLITE_STATIC);
     sqlite3_bind_int64(stmt, 2, (int64_t)user_id);
     sqlite3_bind_text(stmt, 3, nick, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 4, text, -1, SQLITE_STATIC);
     sqlite3_bind_int64(stmt, 5, (int64_t)ts_ms);
-    sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE)
+        LOG_ERROR("db_persist_message: %s", sqlite3_errmsg(db->handle));
+    db_statement_release(stmt);
 }
 
 void db_persist_dm(cupid_db_t *db, uint32_t from_uid, const char *from_nick, uint32_t to_uid,
@@ -260,8 +263,8 @@ void db_persist_dm(cupid_db_t *db, uint32_t from_uid, const char *from_nick, uin
     const char *sql = "INSERT INTO dms(from_uid, from_nick, to_uid, to_nick, text, ts_ms)"
                       " VALUES(?, ?, ?, ?, ?, ?);";
 
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
+    sqlite3_stmt *stmt = db_statement(db, DB_STMT_DM, sql);
+    if (!stmt)
         return;
     sqlite3_bind_int64(stmt, 1, (int64_t)from_uid);
     sqlite3_bind_text(stmt, 2, from_nick, -1, SQLITE_STATIC);
@@ -269,8 +272,9 @@ void db_persist_dm(cupid_db_t *db, uint32_t from_uid, const char *from_nick, uin
     sqlite3_bind_text(stmt, 4, to_nick, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 5, text, -1, SQLITE_STATIC);
     sqlite3_bind_int64(stmt, 6, (int64_t)ts_ms);
-    sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE)
+        LOG_ERROR("db_persist_dm: %s", sqlite3_errmsg(db->handle));
+    db_statement_release(stmt);
 }
 
 /* Reads */

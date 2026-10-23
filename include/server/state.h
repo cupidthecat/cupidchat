@@ -9,7 +9,9 @@ typedef struct {
     const server_config_t *cfg;
     uint32_t next_uid, next_seq;
     int epoll_fd, listen_fd_plain, listen_fd_tls, timer_fd;
-    conn_t **conns;
+    conn_t **conns; /* Direct lookup for file descriptors returned by epoll. */
+    /* Iteration uses live connections rather than the descriptor limit. */
+    conn_t *active_head;
     int conns_size, conn_count;
     room_t **rooms;
     int room_count;

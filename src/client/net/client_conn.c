@@ -428,16 +428,39 @@ int client_send_buddy(client_conn_t *cc, uint16_t type, const char *account) {
 /* Read incoming frames (non-blocking, call from poll loop) */
 
 /* Returns:
- *   0   -  would block (EAGAIN); normal for non-blocking sockets
+ *   0   -  would block or yielded; read_pending requests another turn
  *   1   -  server closed the connection cleanly (FIN / n==0)
  *  -1   -  I/O error or framing error
  */
 int client_read_frames(client_conn_t *cc, void (*on_frame)(const frame_t *, void *ctx), void *ctx) {
     uint8_t buf[65536];
+    size_t bytes = 0;
+    int frames = 0;
+    cc->read_pending = false;
 
     while (1) {
+        frame_t f;
+        parse_result_t pr = frame_parser_next(&cc->parser, &f);
+        if (pr == PARSE_FRAME_OK) {
+            on_frame(&f, ctx);
+            frame_free(&f);
+            if (++frames >= 256) {
+                cc->read_pending = true;
+                return 0;
+            }
+            continue;
+        }
+        if (pr == PARSE_ERROR)
+            return -1;
+        /* Give keyboard input and rendering a turn during incoming bursts. */
+        if (bytes >= sizeof(buf)) {
+            cc->read_pending = true;
+            return 0;
+        }
         ssize_t n = cc->transport->read(cc->transport, buf, sizeof(buf));
         if (n < 0) {
+            if (errno == EINTR)
+                continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 return 0;
             return -1; /* I/O error */
@@ -447,15 +470,7 @@ int client_read_frames(client_conn_t *cc, void (*on_frame)(const frame_t *, void
 
         if (frame_parser_push(&cc->parser, buf, (size_t)n) < 0)
             return -1;
-
-        frame_t f;
-        parse_result_t pr;
-        while ((pr = frame_parser_next(&cc->parser, &f)) == PARSE_FRAME_OK) {
-            on_frame(&f, ctx);
-            frame_free(&f);
-        }
-        if (pr == PARSE_ERROR)
-            return -1;
+        bytes += (size_t)n;
     }
 }
 

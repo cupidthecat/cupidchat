@@ -15,7 +15,7 @@ typedef struct {
     transport_t *transport;
     frame_parser_t parser;
     bool connected;
-    bool send_failed;
+    bool send_failed, read_pending;
     client_output_t *output_head, *output_tail;
     size_t output_bytes;
 } client_conn_t;

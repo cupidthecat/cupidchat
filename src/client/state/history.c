@@ -78,25 +78,30 @@ int history_prefix_width(const cli_msg_t *msg, int width) {
     return prefix;
 }
 
-int history_message_rows(const cli_msg_t *msg, int width, bool ignored) {
+int history_message_rows(cli_msg_t *msg, int width, bool ignored) {
     if (ignored || width <= 0)
         return 1;
     int text_width = width - history_prefix_width(msg, width);
-    return text_wrap_rows(msg->text, text_width);
+    /* Messages are immutable until their ring slot is cleared and reused. */
+    if (msg->wrap_columns != text_width || !msg->wrap_rows) {
+        msg->wrap_rows = text_wrap_rows(msg->text, text_width);
+        msg->wrap_columns = text_width;
+    }
+    return msg->wrap_rows;
 }
 
 static bool ignored_message(const cli_model_t *m, const cli_msg_t *msg) {
     return (msg->type == MSG_CHAT || msg->type == MSG_ACTION) && model_is_ignored(m, msg->nick);
 }
 
-int history_total_rows(const cli_msg_t *buf, int cap, int head, int len, int width,
+int history_total_rows(cli_msg_t *buf, int cap, int head, int len, int width,
                        const cli_model_t *m) {
     if (!buf || cap <= 0 || len <= 0 || width <= 0)
         return 0;
     int oldest = (head - len + cap) % cap, rows = 0;
     const cli_msg_t *prev = NULL;
     for (int i = 0; i < len; i++) {
-        const cli_msg_t *msg = &buf[(oldest + i) % cap];
+        cli_msg_t *msg = &buf[(oldest + i) % cap];
         if (!prev || !history_same_day(prev->timestamp_ms, msg->timestamp_ms))
             rows++;
         rows += history_message_rows(msg, width, ignored_message(m, msg));
@@ -106,8 +111,8 @@ int history_total_rows(const cli_msg_t *buf, int cap, int head, int len, int wid
 }
 
 /* Keep the same message and text position at the bottom when wrapping changes. */
-int history_reflow_scroll(const cli_msg_t *buf, int cap, int head, int len, int old_width,
-                          int new_width, int scroll, const cli_model_t *m) {
+int history_reflow_scroll(cli_msg_t *buf, int cap, int head, int len, int old_width, int new_width,
+                          int scroll, const cli_model_t *m) {
     if (scroll <= 0 || old_width <= 0 || old_width == new_width || !buf || len <= 0)
         return scroll;
     int old_total = history_total_rows(buf, cap, head, len, old_width, m);
@@ -118,7 +123,7 @@ int history_reflow_scroll(const cli_msg_t *buf, int cap, int head, int len, int 
     int oldest = (head - len + cap) % cap, old_row = 0, new_row = 0;
     const cli_msg_t *prev = NULL;
     for (int i = 0; i < len; i++) {
-        const cli_msg_t *msg = &buf[(oldest + i) % cap];
+        cli_msg_t *msg = &buf[(oldest + i) % cap];
         if (!prev || !history_same_day(prev->timestamp_ms, msg->timestamp_ms)) {
             if (target == old_row)
                 return new_total - new_row - 1;

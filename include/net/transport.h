@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 
 typedef enum {
     TRANSPORT_PLAIN,
@@ -19,6 +20,7 @@ struct transport {
     void *tls_ctx;
     ssize_t (*read)(transport_t *, void *, size_t);
     ssize_t (*write)(transport_t *, const void *, size_t);
+    ssize_t (*writev)(transport_t *, const struct iovec *, int);
     int (*handshake)(transport_t *);
     void (*close)(transport_t *);
 };

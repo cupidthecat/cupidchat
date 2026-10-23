@@ -189,8 +189,7 @@ static int handle_join(conn_t *c, const frame_t *f, server_state_t *s) {
         free(ncp);
         if (ncrlen > 0) {
             /* send to every authed connection so all clients see the new room */
-            for (int i = 0; i < s->conns_size; i++) {
-                conn_t *m = s->conns[i];
+            for (conn_t *m = s->active_head; m; m = m->active_next) {
                 if (!m || m->state != CONN_AUTHED)
                     continue;
                 uint8_t *copy = malloc((size_t)ncrlen);
@@ -475,8 +474,7 @@ static int handle_list_users(conn_t *c, const frame_t *f, server_state_t *s) {
         }
     } else {
         /* all online users */
-        for (int i = 0; i < s->conns_size; i++) {
-            conn_t *m = s->conns[i];
+        for (conn_t *m = s->active_head; m; m = m->active_next) {
             if (!m || m->state != CONN_AUTHED)
                 continue;
             tlv_put_str(&b, TAG_NICK, m->nick);
@@ -872,8 +870,7 @@ static int handle_away(conn_t *c, const frame_t *f, server_state_t *s) {
         frame_encode(SMSG_USER_AWAY, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), p, plen, &raw);
     free(p);
     if (rlen > 0) {
-        for (int fd = 0; fd < s->conns_size; fd++) {
-            conn_t *target = s->conns[fd];
+        for (conn_t *target = s->active_head; target; target = target->active_next) {
             if (!target || target->state != CONN_AUTHED)
                 continue;
             bool shared = target == c;
