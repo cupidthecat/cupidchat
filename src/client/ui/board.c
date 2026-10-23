@@ -69,7 +69,7 @@ static int activate(ui_state_t *ui, const cli_model_t *m, int action) {
 int ui_board_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
                    bool printable) {
     board_state_t *b = &ui->board;
-    ui->dirty = true;
+    ui->modal_dirty = true;
     if (ui->layout.too_small)
         return UI_NONE;
     if (b->discard || b->confirm_delete) {
@@ -254,7 +254,7 @@ void ui_redraw_board(ui_state_t *ui, const cli_model_t *m) {
     board_state_t *b = &ui->board;
     int h, w, y, x;
     geometry(ui, &h, &w, &y, &x);
-    WINDOW *win = newwin(h, w, y, x);
+    WINDOW *win = ui_modal_window(ui, UI_MODAL_BOARD, h, w, y, x);
     if (!win)
         return;
     box(win, 0, 0);
@@ -392,5 +392,4 @@ void ui_redraw_board(ui_state_t *ui, const cli_model_t *m) {
     if (cursor_y >= 0)
         wmove(win, cursor_y, cursor_x);
     wnoutrefresh(win);
-    delwin(win);
 }

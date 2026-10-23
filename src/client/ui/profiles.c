@@ -69,7 +69,7 @@ static int activate(ui_state_t *ui, int action) {
 
 int ui_profile_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
                      bool printable) {
-    ui->dirty = true;
+    ui->modal_dirty = true;
     if (ui->layout.too_small)
         return key == 0x11 ? UI_QUIT : UI_NONE;
     if (ui->profile_discard) {
@@ -202,7 +202,7 @@ static void button(ui_state_t *ui, WINDOW *win, int *row, int *col, int width, c
 void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
     int h, w, y, x;
     geometry(ui, &h, &w, &y, &x);
-    WINDOW *win = newwin(h, w, y, x);
+    WINDOW *win = ui_modal_window(ui, UI_MODAL_PROFILE, h, w, y, x);
     if (!win)
         return;
     box(win, 0, 0);
@@ -304,5 +304,4 @@ void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
     if (cursor_y >= 0)
         wmove(win, cursor_y, cursor_x);
     wnoutrefresh(win);
-    delwin(win);
 }

@@ -43,6 +43,12 @@ void ui_compute_layout(ui_layout_t *l, int rows, int cols, bool show_users) {
 }
 
 static void destroy_windows(ui_state_t *ui) {
+    for (int i = 0; i < UI_MODAL_COUNT; i++) {
+        if (ui->modal_windows[i]) {
+            delwin((WINDOW *)ui->modal_windows[i]);
+            ui->modal_windows[i] = NULL;
+        }
+    }
     if (ui->win_topbar) {
         delwin((WINDOW *)ui->win_topbar);
         ui->win_topbar = NULL;
@@ -67,6 +73,24 @@ static void destroy_windows(ui_state_t *ui) {
         delwin((WINDOW *)ui->win_input);
         ui->win_input = NULL;
     }
+}
+
+void *ui_modal_window(ui_state_t *ui, ui_modal_t modal, int height, int width, int y, int x) {
+    WINDOW *win = ui->modal_windows[modal];
+    if (win && (getmaxy(win) != height || getmaxx(win) != width || getbegy(win) != y ||
+                getbegx(win) != x)) {
+        delwin(win);
+        win = NULL;
+    }
+    if (!win)
+        win = newwin(height, width, y, x);
+    ui->modal_windows[modal] = win;
+    if (win) {
+        wattrset(win, A_NORMAL);
+        wbkgdset(win, ' ');
+        werase(win);
+    }
+    return win;
 }
 
 static void create_windows(ui_state_t *ui) {
@@ -115,6 +139,8 @@ int ui_init(ui_state_t *ui) {
     noecho();
     keypad(stdscr, TRUE);
     nodelay(stdscr, TRUE);
+    if (!getenv("ESCDELAY"))
+        set_escdelay(50);
     curs_set(1);
     mousemask(BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON4_PRESSED
 #ifdef BUTTON5_PRESSED

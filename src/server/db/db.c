@@ -475,8 +475,9 @@ int db_get_profile(cupid_db_t *db, uint64_t account, const char *name, profile_i
                           "COALESCE(p.pronouns,''),COALESCE(p.location,''),COALESCE(p.website,'') "
                           "FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE "
                           "u.username=? COLLATE NOCASE";
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(db->handle, account ? by_id : by_name, -1, &stmt, NULL) != SQLITE_OK)
+    sqlite3_stmt *stmt = db_statement(db, account ? DB_STMT_PROFILE_ID : DB_STMT_PROFILE_NAME,
+                                      account ? by_id : by_name);
+    if (!stmt)
         return -1;
     if (account)
         sqlite3_bind_int64(stmt, 1, (sqlite3_int64)account);
@@ -493,7 +494,7 @@ int db_get_profile(cupid_db_t *db, uint64_t account, const char *name, profile_i
             snprintf(profile_field(&info->fields, i), PROFILE_FIELDS[i].capacity, "%s",
                      sqlite3_column_text(stmt, 3 + i));
     }
-    sqlite3_finalize(stmt);
+    db_statement_release(stmt);
     return rc == SQLITE_ROW ? 1 : rc == SQLITE_DONE ? 0 : -1;
 }
 
@@ -528,17 +529,17 @@ int db_account_name(cupid_db_t *db, uint64_t account, char *name, int capacity) 
 }
 
 int db_list_buddies(cupid_db_t *db, uint64_t owner, db_buddy_cb cb, void *ctx) {
-    sqlite3_stmt *stmt = NULL;
     const char *sql = "SELECT u.id,u.username FROM buddies b JOIN users u ON u.id=b.buddy_id "
                       "WHERE b.owner_id=? ORDER BY u.username COLLATE NOCASE";
-    if (sqlite3_prepare_v2(db->handle, sql, -1, &stmt, NULL) != SQLITE_OK)
+    sqlite3_stmt *stmt = db_statement(db, DB_STMT_BUDDIES, sql);
+    if (!stmt)
         return -1;
     sqlite3_bind_int64(stmt, 1, (sqlite3_int64)owner);
     int rc;
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
         cb(ctx, (uint64_t)sqlite3_column_int64(stmt, 0),
            (const char *)sqlite3_column_text(stmt, 1));
-    sqlite3_finalize(stmt);
+    db_statement_release(stmt);
     return rc == SQLITE_DONE ? 0 : -1;
 }
 

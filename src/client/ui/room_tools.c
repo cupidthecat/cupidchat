@@ -67,7 +67,7 @@ static int profile(ui_state_t *ui) {
 int ui_room_control_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t character,
                           bool printable) {
     room_control_state_t *r = &ui->room_control;
-    ui->dirty = true;
+    ui->modal_dirty = true;
     if (!allowed(r, m, r->action))
         r->action = 8;
     if (ui->layout.too_small)
@@ -165,7 +165,7 @@ void ui_redraw_room_control(ui_state_t *ui, const cli_model_t *m) {
     room_control_state_t *r = &ui->room_control;
     int h, w, y, x;
     geometry(ui, &h, &w, &y, &x);
-    WINDOW *win = newwin(h, w, y, x);
+    WINDOW *win = ui_modal_window(ui, UI_MODAL_ROOM, h, w, y, x);
     if (!win)
         return;
     if (!allowed(r, m, r->action))
@@ -248,5 +248,4 @@ void ui_redraw_room_control(ui_state_t *ui, const cli_model_t *m) {
     if (cursor_y >= 0)
         wmove(win, cursor_y, cursor_x);
     wnoutrefresh(win);
-    delwin(win);
 }

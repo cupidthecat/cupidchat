@@ -213,6 +213,31 @@ static void open_buddies(cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
     ui->dirty = true;
 }
 
+static void submit_auth(const cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
+    if (ui->auth_pending || (m->status != CLI_SIGNIN && m->status != CLI_CONNECTING))
+        return;
+    const char *error = !ui->auth_name[0]       ? "Enter an account name"
+                        : !ui->auth_password[0] ? "Enter a password"
+                        : ui->auth_register && strcmp(ui->auth_password, ui->auth_confirm)
+                            ? "Passwords do not match"
+                            : NULL;
+    ui->modal_dirty = true;
+    if (error) {
+        snprintf(ui->auth_error, sizeof(ui->auth_error), "%s", error);
+        return;
+    }
+    if (m->status == CLI_CONNECTING) {
+        ui->auth_pending = ui->auth_deferred = true;
+        return;
+    }
+    int rc = ui->auth_register ? client_send_register(cc, ui->auth_name, ui->auth_password)
+                               : client_send_login(cc, ui->auth_name, ui->auth_password);
+    ui->auth_pending = rc == 0;
+    snprintf(ui->auth_error, sizeof(ui->auth_error), "%s",
+             rc < 0 ? "Could not send sign-in request" : "");
+    ui_auth_clear_secrets(ui);
+}
+
 static void open_profile(cli_model_t *m, client_conn_t *cc, ui_state_t *ui, bool refresh) {
     if (!(m->server_caps & CAP_PROFILES)) {
         model_set_status(m, "This server does not support profiles", 5);
@@ -317,6 +342,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             ctx->ui->show_auth = true;
             ctx->ui->auth_pending = false;
             model_set_status(m, "Create an account or log in to chat", 999);
+            if (ctx->ui->auth_deferred)
+                submit_auth(m, ctx->conn, ctx->ui);
             ctx->ui->dirty = true;
             break;
         }
@@ -1527,7 +1554,7 @@ int main(int argc, char **argv) {
             ui_resize(&ui);
         }
 
-        if (ui.dirty || ui.input_dirty)
+        if (ui.dirty || ui.input_dirty || ui.modal_dirty)
             ui_redraw(&ui, &model);
 
         struct pollfd pfds[] = {
@@ -1668,26 +1695,7 @@ int main(int argc, char **argv) {
                 continue;
             }
             if (kr == UI_AUTH_SUBMIT) {
-                if (model.status != CLI_SIGNIN || ui.auth_pending)
-                    continue;
-                const char *error = !ui.auth_name[0]       ? "Enter an account name"
-                                    : !ui.auth_password[0] ? "Enter a password"
-                                    : ui.auth_register && strcmp(ui.auth_password, ui.auth_confirm)
-                                        ? "Passwords do not match"
-                                        : NULL;
-                if (error) {
-                    snprintf(ui.auth_error, sizeof(ui.auth_error), "%s", error);
-                    ui.dirty = true;
-                    continue;
-                }
-                int rc = ui.auth_register
-                             ? client_send_register(&cc, ui.auth_name, ui.auth_password)
-                             : client_send_login(&cc, ui.auth_name, ui.auth_password);
-                ui.auth_pending = rc == 0;
-                snprintf(ui.auth_error, sizeof(ui.auth_error), "%s",
-                         rc < 0 ? "Could not send sign-in request" : "");
-                ui_auth_clear_secrets(&ui);
-                ui.dirty = true;
+                submit_auth(&model, &cc, &ui);
                 continue;
             }
             if (kr == UI_CLOSE) {
