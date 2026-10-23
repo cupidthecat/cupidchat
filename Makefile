@@ -71,6 +71,7 @@ SHARED_SRC := \
     $(SHDIR)/proto/tlv.c   \
     $(SHDIR)/proto/profile.c \
     $(SHDIR)/proto/bbs.c \
+    $(SHDIR)/proto/room_tools.c \
     $(SHDIR)/net/transport_posix.c
 
 ifeq ($(TLS),1)

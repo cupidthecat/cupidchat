@@ -30,6 +30,7 @@
 #include "client/model.h"
 #include "client/ui.h"
 #include "proto/frame.h"
+#include "proto/room_tools.h"
 #include "proto/tlv.h"
 #include "proto/types.h"
 
@@ -1202,8 +1203,9 @@ static void handle_command(const char *line, cli_model_t *m, client_conn_t *cc, 
             room++; /* strip accidental leading spaces */
         if (*room == '#')
             room++;
-        if (!*room) {
-            model_set_status(m, "Usage: /join <roomname>", 4);
+        if (!room_name_valid(room)) {
+            model_set_status(m, "Use a room name of 1-64 letters, digits, underscores, or hyphens",
+                             5);
         } else {
             /* Rejoining requests a replay; selecting a joined room keeps its buffer. */
             cli_room_t *existing = model_find_room(m, room);

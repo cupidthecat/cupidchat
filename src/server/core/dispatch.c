@@ -12,6 +12,7 @@
 #include <time.h>
 
 #include "proto/frame.h"
+#include "proto/room_tools.h"
 #include "proto/tlv.h"
 #include "proto/types.h"
 #include "server/admin.h"
@@ -58,19 +59,6 @@ static bool nick_valid(const char *nick) {
             return false;
     }
     return len >= 1 && len <= MAX_NICK_LEN;
-}
-
-static bool room_valid(const char *name) {
-    if (!name || !*name)
-        return false;
-    size_t len = 0;
-    for (const char *p = name; *p; p++, len++) {
-        char ch = *p;
-        if (!(ch == '_' || ch == '-' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-              (ch >= '0' && ch <= '9')))
-            return false;
-    }
-    return len >= 1 && len <= MAX_ROOM_LEN;
 }
 
 /* Handler: CMSG_HELLO */
@@ -148,10 +136,10 @@ static int join_error(conn_t *c, error_code_t code, const char *message, const c
 
 static int handle_join(conn_t *c, const frame_t *f, server_state_t *s) {
     char room_name[MAX_ROOM_LEN + 1] = {0};
-    if (!tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name))) {
+    if (!room_read_name(f->payload, f->hdr.length, room_name)) {
         return send_error(c, ERR_PROTOCOL, "missing room tag", s);
     }
-    if (!room_valid(room_name))
+    if (!room_name_valid(room_name))
         return send_error(c, ERR_PROTOCOL, "invalid room name (a-z A-Z 0-9 _ -)", s);
 
     int existing = server_find_room(s, room_name);
@@ -266,7 +254,9 @@ static int handle_join(conn_t *c, const frame_t *f, server_state_t *s) {
 
 static int handle_leave(conn_t *c, const frame_t *f, server_state_t *s) {
     char room_name[MAX_ROOM_LEN + 1] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name));
+    if (!room_read_name(f->payload, f->hdr.length, room_name))
+        return send_error(c, ERR_PROTOCOL,
+                          "Room names must use 1-64 letters, digits, underscores, or hyphens", s);
 
     int ri = server_find_room(s, room_name);
     if (ri < 0 || !conn_is_room_member(c, ri))
@@ -304,7 +294,9 @@ static int handle_room_msg(conn_t *c, const frame_t *f, server_state_t *s) {
 
     char room_name[MAX_ROOM_LEN + 1] = {0};
     char text[MAX_MSG_LEN + 1] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name));
+    if (!room_read_name(f->payload, f->hdr.length, room_name))
+        return send_error(c, ERR_PROTOCOL,
+                          "Room names must use 1-64 letters, digits, underscores, or hyphens", s);
     tlv_read_str(f->payload, f->hdr.length, TAG_TEXT, text, sizeof(text));
 
     if (!*text)
@@ -447,7 +439,10 @@ static int handle_list_rooms(conn_t *c, const frame_t *f, server_state_t *s) {
 
 static int handle_list_users(conn_t *c, const frame_t *f, server_state_t *s) {
     char room_name[MAX_ROOM_LEN + 1] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name));
+    uint16_t name_length = 0;
+    const uint8_t *raw_room = tlv_find(f->payload, f->hdr.length, TAG_ROOM, &name_length);
+    if (raw_room && name_length && !room_read_name(f->payload, f->hdr.length, room_name))
+        return send_error(c, ERR_PROTOCOL, "Invalid room name", s);
 
     tlv_builder_t b;
     tlv_builder_init(&b);
@@ -489,7 +484,9 @@ static int handle_list_users(conn_t *c, const frame_t *f, server_state_t *s) {
 
 static int handle_delete_room(conn_t *c, const frame_t *f, server_state_t *s) {
     char room_name[MAX_ROOM_LEN + 1] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name));
+    if (!room_read_name(f->payload, f->hdr.length, room_name))
+        return send_error(c, ERR_PROTOCOL,
+                          "Room names must use 1-64 letters, digits, underscores, or hyphens", s);
 
     int ri = server_find_room(s, room_name);
     if (ri < 0)
@@ -753,7 +750,9 @@ static int handle_set_topic(conn_t *c, const frame_t *f, server_state_t *s) {
 
     char room_name[MAX_ROOM_LEN + 1] = {0};
     char topic[256] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name));
+    if (!room_read_name(f->payload, f->hdr.length, room_name))
+        return send_error(c, ERR_PROTOCOL,
+                          "Room names must use 1-64 letters, digits, underscores, or hyphens", s);
     tlv_read_str(f->payload, f->hdr.length, TAG_TOPIC, topic, sizeof(topic));
 
     int ri = server_find_room(s, room_name);
@@ -789,7 +788,9 @@ static int handle_set_topic(conn_t *c, const frame_t *f, server_state_t *s) {
 
 static int handle_typing(conn_t *c, const frame_t *f, server_state_t *s) {
     char room_name[MAX_ROOM_LEN + 1] = {0};
-    tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name));
+    if (!room_read_name(f->payload, f->hdr.length, room_name))
+        return send_error(c, ERR_PROTOCOL,
+                          "Room names must use 1-64 letters, digits, underscores, or hyphens", s);
     int ri = server_find_room(s, room_name);
     if (ri < 0)
         return 0; /* room not found -  silently ignore */
