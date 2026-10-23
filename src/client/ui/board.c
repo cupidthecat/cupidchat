@@ -217,13 +217,17 @@ static void line(WINDOW *win, const char *text, int width, int offset, int visib
     int rows = text_wrap_rows(text, width);
     if (selected)
         wattron(win, A_REVERSE);
-    for (int i = 0; i < rows; i++, (*logical)++) {
-        if (*logical < offset || *logical >= offset + visible)
-            continue;
+    int first = offset > *logical ? offset - *logical : 0;
+    int last = offset + visible - *logical;
+    if (last > rows)
+        last = rows;
+    int byte = first < last ? text_row_offset(text, width, first) : 0;
+    for (int i = first; i < last; i++) {
         char part[BBS_BODY_SIZE + 256];
-        text_wrap_line(text, width, i, part, sizeof(part));
-        mvwaddstr(win, 2 + *logical - offset, 2, part);
+        byte = text_wrap_next_line(text, width, byte, part, sizeof(part));
+        mvwaddstr(win, 2 + *logical + i - offset, 2, part);
     }
+    *logical += rows;
     wattroff(win, A_REVERSE);
 }
 
@@ -271,9 +275,8 @@ void ui_redraw_board(ui_state_t *ui, const cli_model_t *m) {
         text_wrap_line(label, w - 4, 0, part, sizeof(part));
         mvwaddstr(win, 1, 2, part);
         if (b->focus == 0) {
-            int offset = 0, width = w - 13;
-            while (text_width(b->title, offset, b->cursors[0]) >= width)
-                offset = text_next(b->title, offset);
+            int width = w - 13;
+            int offset = text_view_offset(b->title, 0, b->cursors[0], width);
             int end = text_cell_offset(b->title, offset, width);
             mvwhline(win, 1, 11, ' ', width);
             mvwaddnstr(win, 1, 11, b->title + offset, end - offset);
@@ -291,8 +294,9 @@ void ui_redraw_board(ui_state_t *ui, const cli_model_t *m) {
             cursor_y = 2 + row - b->body_scroll;
             cursor_x = 2 + text_width(display, text_row_offset(display, w - 4, row), b->cursors[1]);
         }
+        int body_offset = text_row_offset(display, w - 4, b->body_scroll);
         for (int i = 0; i < visible; i++) {
-            text_wrap_line(display, w - 4, b->body_scroll + i, part, sizeof(part));
+            body_offset = text_wrap_next_line(display, w - 4, body_offset, part, sizeof(part));
             mvwaddstr(win, 2 + i, 2, part);
         }
         int col = 2;
