@@ -176,6 +176,7 @@ int server_room_command(server_state_t *s, conn_t *c, const frame_t *f) {
         if (db_room_topic_lock(s->db, room, enabled != 0) < 0)
             return error(s, c, request, ERR_UNKNOWN, "Could not save topic permissions");
         r->topic_locked = enabled != 0;
+        LOG_INFO("room=%s actor=%s topic_lock=%u", room, c->base_nick, enabled);
         update_members(s, ri, c);
         return server_room_info(s, c, ri, request,
                                 enabled ? "Only room operators can change the topic"

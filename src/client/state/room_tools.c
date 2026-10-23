@@ -26,7 +26,9 @@ void room_control_send(ui_state_t *ui, cli_model_t *m, client_conn_t *cc, const 
         return;
     }
     if (!room_name_valid(room)) {
-        message(ui, m, "Select a room first");
+        message(ui, m,
+                *room ? "Use a room name of 1-64 letters, digits, underscores, or hyphens"
+                      : "Select a room first");
         return;
     }
     if (++r->request == 0)
@@ -215,6 +217,8 @@ bool room_control_frame(ui_state_t *ui, cli_model_t *m, client_conn_t *cc, const
     tlv_read_u32(p, length, TAG_REQUEST_ID, &id);
     if (!id) {
         if (r->loaded && !strcmp(r->info.room, room)) {
+            if ((r->info.role & ROOM_MANAGERS) && !(info.role & ROOM_MANAGERS))
+                r->info.count = 0;
             r->info.role = info.role;
             r->info.topic_locked = info.topic_locked;
             snprintf(r->message, sizeof(r->message),

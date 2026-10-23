@@ -369,6 +369,8 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
                 ctx->ui->room_control.info.role |= ROOM_ADMIN;
             else
                 ctx->ui->room_control.info.role &= (uint8_t)~ROOM_ADMIN;
+            if (!(ctx->ui->room_control.info.role & ROOM_MANAGERS))
+                ctx->ui->room_control.info.count = 0;
             m->is_muted = muted != 0;
             if (m->is_muted)
                 model_set_status(m, "Your account is muted", 999);

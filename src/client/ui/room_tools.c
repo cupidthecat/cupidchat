@@ -181,6 +181,7 @@ void ui_redraw_room_control(ui_state_t *ui, const cli_model_t *m) {
                        : r->info.role & ROOM_ADMIN    ? "admin"
                        : r->info.role & ROOM_OPERATOR ? "operator"
                        : r->info.role & ROOM_BANNED   ? "banned"
+                       : r->info.role & ROOM_INVITED  ? "invited"
                                                       : "member";
     if (h >= 10) {
         snprintf(text, sizeof(text), "Your role: %s | topics: %s", role,
