@@ -40,6 +40,14 @@
 static volatile int g_sigwinch = 0;
 static volatile int g_quit = 0;
 
+#define NETWORK_REDRAW_MS 17
+
+static uint64_t monotonic_ms(void) {
+    struct timespec stamp;
+    clock_gettime(CLOCK_MONOTONIC, &stamp);
+    return (uint64_t)stamp.tv_sec * 1000 + (uint64_t)stamp.tv_nsec / 1000000;
+}
+
 static void on_sigwinch(int s) {
     (void)s;
     g_sigwinch = 1;
@@ -116,6 +124,7 @@ typedef struct {
     ui_state_t *ui;
     time_t *last_users_refresh;
     time_t *last_rooms_refresh;
+    bool network_dirty;
 } frame_ctx_t;
 
 static void select_dm(cli_model_t *m, ui_state_t *ui, uint32_t uid, const char *nick) {
@@ -316,7 +325,7 @@ static void enter_chat(frame_ctx_t *ctx) {
         client_send_board(cc, &(board_request_t){.type = CMSG_BBS_STATUS});
 }
 
-static void on_frame(const frame_t *f, void *ctx_ptr) {
+static void apply_frame(const frame_t *f, void *ctx_ptr) {
     frame_ctx_t *ctx = ctx_ptr;
     cli_model_t *m = ctx->model;
     client_conn_t *cc = ctx->conn;
@@ -998,6 +1007,22 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
     }
 }
 
+static void on_frame(const frame_t *f, void *ctx_ptr) {
+    frame_ctx_t *ctx = ctx_ptr;
+    bool dirty = ctx->ui->dirty;
+    int rooms = ctx->model->room_count, dms = ctx->model->dm_count;
+    int room = ctx->model->active_room, dm = ctx->model->active_dm;
+    apply_frame(f, ctx_ptr);
+    bool chat_update = f->hdr.type == SMSG_ROOM_MSG || f->hdr.type == SMSG_ROOM_HISTORY ||
+                       f->hdr.type == SMSG_DM || f->hdr.type == SMSG_TYPING_NOTIFY;
+    if (chat_update && !dirty && ctx->ui->dirty && rooms == ctx->model->room_count &&
+        dms == ctx->model->dm_count && room == ctx->model->active_room &&
+        dm == ctx->model->active_dm) {
+        ctx->ui->dirty = false;
+        ctx->network_dirty = true;
+    }
+}
+
 /* Command dispatcher */
 
 static void close_active_chat(cli_model_t *m, client_conn_t *cc, ui_state_t *ui) {
@@ -1534,10 +1559,15 @@ int main(int argc, char **argv) {
     time_t last_typing_sent = 0; /* throttle CMSG_TYPING to once per 2s */
     time_t last_rooms_refresh = 0;
 
-    frame_ctx_t fctx = {&model, &cc, &ui, &last_users_refresh, &last_rooms_refresh};
+    frame_ctx_t fctx = {.model = &model,
+                        .conn = &cc,
+                        .ui = &ui,
+                        .last_users_refresh = &last_users_refresh,
+                        .last_rooms_refresh = &last_rooms_refresh};
 
     char input_line[4096];
     bool input_pending = false;
+    uint64_t next_redraw = 0;
 
     while (!g_quit) {
         if (cc.send_failed) {
@@ -1546,7 +1576,6 @@ int main(int argc, char **argv) {
             model.status = CLI_DISCONNECTED;
             ui.dirty = true;
             ui_redraw(&ui, &model);
-            sleep(2);
             break;
         }
         if (g_sigwinch) {
@@ -1554,39 +1583,49 @@ int main(int argc, char **argv) {
             ui_resize(&ui);
         }
 
-        if (ui.dirty || ui.input_dirty || ui.modal_dirty)
+        /* Network traffic shares a display cadence; local input paints immediately. */
+        if (ui.dirty || ui.input_dirty || ui.modal_dirty ||
+            (fctx.network_dirty && monotonic_ms() >= next_redraw)) {
+            ui.dirty |= fctx.network_dirty;
+            fctx.network_dirty = false;
             ui_redraw(&ui, &model);
+            next_redraw = monotonic_ms() + NETWORK_REDRAW_MS;
+        }
 
         struct pollfd pfds[] = {
             {.fd = cc.fd, .events = POLLIN | (cc.output_head ? POLLOUT : 0)},
             {.fd = STDIN_FILENO, .events = POLLIN},
         };
-        int pr = poll(pfds, 2, cc.read_pending || input_pending ? 0 : 250);
+        int timeout = 250;
+        if (cc.read_pending || input_pending)
+            timeout = 0;
+        else if (fctx.network_dirty) {
+            uint64_t now = monotonic_ms();
+            timeout = now >= next_redraw ? 0 : (int)(next_redraw - now);
+        }
+        int pr = poll(pfds, 2, timeout);
 
         if (pr < 0) {
             if (errno == EINTR)
                 continue;
             model_set_status(&model, "poll() error", 5);
+            model.status = CLI_DISCONNECTED;
             break;
         }
 
         if (pfds[1].revents & (POLLHUP | POLLERR | POLLNVAL))
             break;
-        if (pfds[0].revents & (POLLHUP | POLLERR)) {
-            model_set_status(&model, "Server disconnected", 999);
+        if (pfds[0].revents & POLLNVAL) {
+            model_set_status(&model, "Invalid server socket", 999);
             model.status = CLI_DISCONNECTED;
-            ui.dirty = true;
-            /* Redraw the disconnect notice, then break.
-             * Reconnect support is not implemented; exit cleanly. */
-            ui_redraw(&ui, &model);
-            sleep(2);
             break;
         }
 
         if ((pfds[0].revents & POLLOUT) && client_flush(&cc) < 0)
             continue;
 
-        if (cc.read_pending || (pfds[0].revents & POLLIN)) {
+        /* A hangup can arrive with the server's final frames still unread. */
+        if (cc.read_pending || (pfds[0].revents & (POLLIN | POLLHUP | POLLERR))) {
             int rr = client_read_frames(&cc, on_frame, &fctx);
             if (rr != 0) {
                 /* rr==1: clean close (server sent FIN -  may have preceded an
@@ -1834,6 +1873,9 @@ int main(int argc, char **argv) {
     }
 
     ui_free(&ui);
+    if (model.status == CLI_DISCONNECTED)
+        fprintf(stderr, "Connection closed. Last status: %s\n",
+                model.status_msg[0] ? model.status_msg : "Server disconnected");
     sound_play_sync(SND_GOODBYE); /* plays to completion before teardown */
     client_disconnect(&cc);
     model_free(&model);

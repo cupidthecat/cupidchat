@@ -193,10 +193,13 @@ int client_send_frame(client_conn_t *cc, uint16_t type, const uint8_t *payload, 
 int client_flush(client_conn_t *cc) {
     if (!cc->connected || cc->send_failed)
         return -1;
-    while (cc->output_head) {
+    size_t flushed = 0;
+    while (cc->output_head && flushed < 65536) {
         client_output_t *output = cc->output_head;
-        ssize_t n = cc->transport->write(cc->transport, output->data + output->sent,
-                                         output->length - output->sent);
+        size_t remaining = output->length - output->sent;
+        if (cc->transport->mode == TRANSPORT_PLAIN && remaining > 65536 - flushed)
+            remaining = 65536 - flushed;
+        ssize_t n = cc->transport->write(cc->transport, output->data + output->sent, remaining);
         if (n < 0) {
             if (errno == EINTR)
                 continue;
@@ -210,6 +213,7 @@ int client_flush(client_conn_t *cc) {
             return -1;
         }
         output->sent += (size_t)n;
+        flushed += (size_t)n;
         if (output->sent == output->length) {
             cc->output_head = output->next;
             if (!cc->output_head)
