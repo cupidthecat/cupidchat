@@ -36,11 +36,11 @@ void room_destroy(room_t *r) {
 }
 
 bool room_add_member(room_t *r, int fd) {
-    if (r->member_count >= ROOM_MEMBER_SLOTS)
-        return false;
     for (int i = 0; i < r->member_count; i++)
         if (r->member_fds[i] == fd)
             return true; /* already in */
+    if (r->member_count >= ROOM_MEMBER_SLOTS)
+        return false;
     r->member_fds[r->member_count++] = fd;
     return true;
 }
