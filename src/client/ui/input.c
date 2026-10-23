@@ -536,12 +536,9 @@ void ui_scroll(ui_state_t *ui, cli_model_t *m, int delta) {
         offset = &d->scroll_offset;
     }
     if (offset) {
-        int maximum =
-            history_total_rows(buf, cap, head, len, ui->layout.chat_w, m) - (ui->layout.chat_h - 1);
-        if (maximum < 0)
-            maximum = 0;
         long next = (long)*offset + delta;
-        *offset = next < 0 ? 0 : next > maximum ? maximum : (int)next;
+        *offset = history_clamp_scroll(buf, cap, head, len, ui->layout.chat_w,
+                                       ui->layout.chat_h - 1, next, m);
     }
     ui->dirty = true;
 }

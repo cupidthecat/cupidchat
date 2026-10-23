@@ -8,6 +8,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 
 - `epoll`-based event loop with `timerfd` keepalive
 - Batched TCP output and connection scans that visit connected clients only
+- Shared broadcast payloads with separate send positions for each recipient
 - Persistent room operators, account bans, topic locks, and room invitations
 - Persistent BBS threads and replies, unread markers, and clickable author profiles
 - Persistent account moderation, admin roles, editable MOTD and banners, and server polls
@@ -23,7 +24,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 - ncurses TUI: room sidebar, topic bar, chat pane, status bar, user list
 - Rooms and direct messages (DMs) with separate scroll state per conversation
 - Keyboard input wakes the client immediately; draft edits redraw only the input line
-- Cached message wrapping for scrolling through retained history
+- Cached message wrapping and visible-row rendering for scrolling through retained history
 - Nonblocking outgoing queue capped at 256 KiB, with partial-write handling
 - Clickable account profiles and a public profile editor (F7 or `/profile`)
 - Password-masked sign-in and account creation forms
@@ -587,6 +588,7 @@ Installs to:
 - The server allocates its connection table based on the process's `RLIMIT_NOFILE` (open file descriptor limit) rather than `--max-clients`, so file descriptor numbers never exceed the array bounds regardless of OS assignment.
 - SQLite is opened in WAL mode with a 5-second busy timeout, so brief lock contention between the server and external tools does not cause crashes.
 - The database file (`cupidchat.db`) is created automatically on first run if it does not exist.
+- Output limits count unsent bytes per connection. Low-priority notifications can be dropped first. If an important frame cannot be queued, the server disconnects that recipient after allowing up to two seconds for pending output to drain.
 
 ## WSL audio
 

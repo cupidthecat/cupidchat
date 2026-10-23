@@ -13,6 +13,42 @@
 #include "server/conn.h"
 #include "server/log.h"
 
+struct conn_shared_frame {
+    /* All references belong to the server's event loop. */
+    size_t refs, len;
+    uint8_t data[];
+};
+
+conn_shared_frame_t *conn_shared_frame_new(const uint8_t *buf, size_t len) {
+    if (len > SIZE_MAX - sizeof(conn_shared_frame_t) || (len && !buf))
+        return NULL;
+    conn_shared_frame_t *frame = malloc(sizeof(*frame) + len);
+    if (!frame)
+        return NULL;
+    frame->refs = 1;
+    frame->len = len;
+    if (len)
+        memcpy(frame->data, buf, len);
+    return frame;
+}
+
+void conn_shared_frame_release(conn_shared_frame_t *frame) {
+    if (frame && --frame->refs == 0)
+        free(frame);
+}
+
+static void release_data(uint8_t *data, conn_shared_frame_t *shared) {
+    if (shared)
+        conn_shared_frame_release(shared);
+    else
+        free(data);
+}
+
+static void release_node(obuf_node_t *node) {
+    release_data(node->data, node->shared);
+    free(node);
+}
+
 /* Lifecycle */
 
 conn_t *conn_create(int fd, transport_t *t, int epoll_fd, const server_config_t *cfg) {
@@ -51,8 +87,7 @@ void conn_destroy(conn_t *c) {
     obuf_node_t *n = c->obuf_head;
     while (n) {
         obuf_node_t *nx = n->next;
-        free(n->data);
-        free(n);
+        release_node(n);
         n = nx;
     }
 
@@ -63,9 +98,10 @@ void conn_destroy(conn_t *c) {
 
 /* Output queue */
 
-int conn_enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags, const server_config_t *cfg) {
+static int enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags, conn_shared_frame_t *shared,
+                   const server_config_t *cfg) {
     /* backpressure: drop oldest low-priority frames until we are under limit */
-    while (c->obuf_bytes + len > cfg->obuf_limit) {
+    while (len > cfg->obuf_limit || c->obuf_bytes > cfg->obuf_limit - len) {
         obuf_node_t *prev = NULL, *cur = c->obuf_head;
         bool dropped = false;
         while (cur) {
@@ -80,8 +116,7 @@ int conn_enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags, const serv
                 if (c->obuf_tail == drop)
                     c->obuf_tail = prev;
                 c->obuf_bytes -= freed;
-                free(drop->data);
-                free(drop);
+                release_node(drop);
                 dropped = true;
                 break;
             }
@@ -90,18 +125,24 @@ int conn_enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags, const serv
         }
         if (!dropped) {
             /* no low-priority frames remain -  refuse the incoming frame */
-            free(buf);
-            LOG_WARN("fd=%d obuf limit exceeded, dropping frame", c->fd);
+            release_data(buf, shared);
+            if (!(flags & FRAME_FLAG_PRIORITY_LOW) && !c->output_failed) {
+                c->output_failed = true;
+                LOG_WARN("fd=%d critical output queue full", c->fd);
+            }
             return -1;
         }
     }
 
     obuf_node_t *node = malloc(sizeof(*node));
     if (!node) {
-        free(buf);
+        release_data(buf, shared);
+        if (!(flags & FRAME_FLAG_PRIORITY_LOW))
+            c->output_failed = true;
         return -1;
     }
     node->data = buf;
+    node->shared = shared;
     node->len = len;
     node->sent = 0;
     node->flags = flags;
@@ -123,6 +164,16 @@ int conn_enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags, const serv
         c->want_write = true;
     }
     return 0;
+}
+
+int conn_enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags, const server_config_t *cfg) {
+    return enqueue(c, buf, len, flags, NULL, cfg);
+}
+
+int conn_enqueue_shared(conn_t *c, conn_shared_frame_t *frame, uint16_t flags,
+                        const server_config_t *cfg) {
+    frame->refs++;
+    return enqueue(c, frame->data, frame->len, flags, frame, cfg);
 }
 
 int conn_flush(conn_t *c) {
@@ -170,8 +221,7 @@ int conn_flush(conn_t *c) {
                 c->obuf_head = node->next;
                 if (!c->obuf_head)
                     c->obuf_tail = NULL;
-                free(node->data);
-                free(node);
+                release_node(node);
             }
         }
     }
@@ -191,8 +241,11 @@ int conn_send_frame(conn_t *c, uint16_t type, uint16_t flags, uint32_t seq, cons
                     uint32_t plen, const server_config_t *cfg) {
     uint8_t *buf;
     ssize_t blen = frame_encode(type, flags, seq, payload, plen, &buf);
-    if (blen < 0)
+    if (blen < 0) {
+        if (!(flags & FRAME_FLAG_PRIORITY_LOW))
+            c->output_failed = true;
         return -1;
+    }
     return conn_enqueue(c, buf, (size_t)blen, flags, cfg);
 }
 

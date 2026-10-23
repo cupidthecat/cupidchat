@@ -247,9 +247,12 @@ uint32_t server_room_owner_uid(server_state_t *s, const room_t *room) {
 void server_broadcast_room(server_state_t *s, int room_idx, int skip_fd, uint8_t *buf, size_t len,
                            uint16_t flags) {
     room_t *r = s->rooms[room_idx];
-    if (!r)
+    if (!r || !r->member_count)
         return;
 
+    conn_shared_frame_t *frame = conn_shared_frame_new(buf, len);
+    if (!frame)
+        LOG_WARN("server_broadcast_room: could not allocate %zu bytes", len);
     for (int i = 0; i < r->member_count; i++) {
         int mfd = r->member_fds[i];
         if (mfd == skip_fd)
@@ -258,15 +261,14 @@ void server_broadcast_room(server_state_t *s, int room_idx, int skip_fd, uint8_t
         if (!c || c->state != CONN_AUTHED)
             continue;
 
-        /* duplicate the buffer for each recipient */
-        uint8_t *copy = malloc(len);
-        if (!copy) {
-            LOG_WARN("server_broadcast_room: malloc failed for fd=%d", mfd);
+        if (!frame) {
+            if (!(flags & FRAME_FLAG_PRIORITY_LOW))
+                c->output_failed = true;
             continue;
         }
-        memcpy(copy, buf, len);
-        conn_enqueue(c, copy, len, flags, s->cfg);
+        conn_enqueue_shared(c, frame, flags, s->cfg);
     }
+    conn_shared_frame_release(frame);
 }
 
 uint32_t server_next_uid(server_state_t *s) {
