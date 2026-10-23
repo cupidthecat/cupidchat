@@ -13,8 +13,11 @@
 
 typedef enum { CONN_HANDSHAKE, CONN_LOGIN, CONN_AUTHED, CONN_CLOSING } conn_state_t;
 
+typedef struct conn_shared_frame conn_shared_frame_t;
+
 typedef struct obuf_node {
     uint8_t *data;
+    conn_shared_frame_t *shared;
     size_t len, sent;
     uint16_t flags;
     struct obuf_node *next;
@@ -35,7 +38,7 @@ typedef struct conn {
     frame_parser_t parser;
     rate_bucket_t rate;
     time_t last_active, ping_sent_at, close_deadline, auth_started;
-    bool ping_pending, want_write, read_pending;
+    bool ping_pending, want_write, read_pending, output_failed;
     obuf_node_t *obuf_head, *obuf_tail;
     size_t obuf_bytes;
     int rooms[MAX_ROOMS_PER_USER], room_count;
@@ -44,6 +47,11 @@ typedef struct conn {
 conn_t *conn_create(int fd, transport_t *t, int epoll_fd, const server_config_t *cfg);
 void conn_destroy(conn_t *c);
 int conn_enqueue(conn_t *c, uint8_t *buf, size_t len, uint16_t flags, const server_config_t *cfg);
+conn_shared_frame_t *conn_shared_frame_new(const uint8_t *buf, size_t len);
+void conn_shared_frame_release(conn_shared_frame_t *frame);
+/* Retains a reference for the queue. The caller keeps its own reference. */
+int conn_enqueue_shared(conn_t *c, conn_shared_frame_t *frame, uint16_t flags,
+                        const server_config_t *cfg);
 int conn_flush(conn_t *c);
 int conn_send_frame(conn_t *c, uint16_t type, uint16_t flags, uint32_t seq, const uint8_t *payload,
                     uint32_t plen, const server_config_t *cfg);

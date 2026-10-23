@@ -94,6 +94,24 @@ static bool ignored_message(const cli_model_t *m, const cli_msg_t *msg) {
     return (msg->type == MSG_CHAT || msg->type == MSG_ACTION) && model_is_ignored(m, msg->nick);
 }
 
+int history_clamp_scroll(cli_msg_t *buf, int cap, int head, int len, int width, int height,
+                         long scroll, const cli_model_t *m) {
+    if (scroll <= 0 || !buf || cap <= 0 || len <= 0 || width <= 0 || height <= 0)
+        return 0;
+    int oldest = (head - len + cap) % cap, rows = 0;
+    /* Stop once the requested viewport fits; older rows cannot change the clamp. */
+    for (int i = len - 1; i >= 0; i--) {
+        cli_msg_t *msg = &buf[(oldest + i) % cap];
+        const cli_msg_t *prev = i ? &buf[(oldest + i - 1) % cap] : NULL;
+        rows += history_message_rows(msg, width, ignored_message(m, msg));
+        if (!prev || !history_same_day(prev->timestamp_ms, msg->timestamp_ms))
+            rows++;
+        if (rows >= height && scroll <= rows - height)
+            return (int)scroll;
+    }
+    return rows > height ? rows - height : 0;
+}
+
 int history_total_rows(cli_msg_t *buf, int cap, int head, int len, int width,
                        const cli_model_t *m) {
     if (!buf || cap <= 0 || len <= 0 || width <= 0)

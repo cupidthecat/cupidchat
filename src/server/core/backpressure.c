@@ -21,10 +21,10 @@
 /*
  * Returns true when the connection's output queue is so full that it
  * should be forcibly disconnected rather than accumulate more memory.
- * Threshold: 2× obuf_limit (after low-priority drops, if still filling up).
+ * A critical enqueue failure is fatal even though the queue itself stays bounded.
  */
 bool bp_should_disconnect(const conn_t *c, const server_config_t *cfg) {
-    return c->obuf_bytes > cfg->obuf_limit * 2;
+    return c->output_failed || c->obuf_bytes > cfg->obuf_limit * 2;
 }
 
 /*

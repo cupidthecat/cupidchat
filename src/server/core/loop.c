@@ -295,12 +295,6 @@ int server_run(server_state_t *s) {
                 if (c->obuf_head && (events[i].events & EPOLLOUT))
                     conn_flush(c);
             }
-
-            /* check backpressure */
-            if (c->state != CONN_CLOSING && bp_should_disconnect(c, s->cfg)) {
-                bp_send_slow_client_error(c, s->cfg);
-                c->state = CONN_CLOSING;
-            }
         }
 
         /* Timer-driven closes must not depend on another event from the peer.
@@ -308,7 +302,12 @@ int server_run(server_state_t *s) {
         time_t now = time(NULL);
         for (conn_t *c = s->active_head, *next; c; c = next) {
             next = c->active_next;
-            if (!c || c->state != CONN_CLOSING)
+            /* Broadcast recipients may have no readable or writable event. */
+            if (c->state != CONN_CLOSING && bp_should_disconnect(c, s->cfg)) {
+                bp_send_slow_client_error(c, s->cfg);
+                c->state = CONN_CLOSING;
+            }
+            if (c->state != CONN_CLOSING)
                 continue;
             if (!c->close_deadline)
                 c->close_deadline = now + 2;

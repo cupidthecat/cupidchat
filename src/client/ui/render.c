@@ -307,56 +307,53 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
     }
     *offset = history_reflow_scroll(buf, cap, head, len, *view_width, width, *offset, m);
     *view_width = width;
-    int total = history_total_rows(buf, cap, head, len, width, m);
-    int maximum = total > height ? total - height : 0;
-    if (*offset > maximum)
-        *offset = maximum;
-    if (*offset < 0)
-        *offset = 0;
+    *offset = history_clamp_scroll(buf, cap, head, len, width, height, *offset, m);
     if (!*offset)
         *unread = 0;
-    int first = total - height - *offset;
-    if (first < 0)
-        first = 0;
-    int last = first + height;
-    int padding = total < height ? height - total : 0;
-    int oldest = (head - len + cap) % cap, logical_row = 0;
-    const cli_msg_t *prev = NULL;
-    bool prev_ignored = false;
-    for (int i = 0; i < len && logical_row < last; i++) {
+    int oldest = (head - len + cap) % cap, row = height - 1, skip = *offset;
+    /* Walk from the viewport's bottom and stop before touching older history. */
+    for (int i = len - 1; i >= 0 && row >= 0; i--) {
         cli_msg_t *msg = &buf[(oldest + i) % cap];
+        const cli_msg_t *prev = i ? &buf[(oldest + i - 1) % cap] : NULL;
         bool separator = !prev || !history_same_day(prev->timestamp_ms, msg->timestamp_ms);
-        if (separator) {
-            if (logical_row >= first && logical_row < last)
-                render_date_separator(w, padding + logical_row - first, width, msg->timestamp_ms);
-            logical_row++;
-        }
         bool ignored =
             (msg->type == MSG_CHAT || msg->type == MSG_ACTION) && model_is_ignored(m, msg->nick);
         int rows = history_message_rows(msg, width, ignored);
-        int begin = first > logical_row ? first - logical_row : 0;
-        int text_offset =
-            begin < rows && !ignored
-                ? text_row_offset(msg->text, width - history_prefix_width(msg, width), begin)
-                : 0;
-        for (int line = begin; line < rows && logical_row + line < last; line++) {
+        int end = rows - skip;
+        if (end <= 0) {
+            skip -= rows;
+        } else {
+            skip = 0;
+            int begin = end > row + 1 ? end - row - 1 : 0;
+            int top = row - (end - begin) + 1;
+            int text_offset =
+                ignored
+                    ? 0
+                    : text_row_offset(msg->text, width - history_prefix_width(msg, width), begin);
+            bool prev_ignored = prev && (prev->type == MSG_CHAT || prev->type == MSG_ACTION) &&
+                                model_is_ignored(m, prev->nick);
             bool grouped = !separator && !prev_ignored && can_group(prev, msg);
-            if (!line && !grouped && !ignored && !msg->is_history && msg->user_id &&
+            if (!begin && !grouped && !ignored && !msg->is_history && msg->user_id &&
                 (msg->type == MSG_CHAT || msg->type == MSG_ACTION) &&
                 ui->name_hit_count < CLI_HISTORY_CAP) {
                 int hit = ui->name_hit_count++;
-                ui->name_hits[hit].row = 2 + padding + logical_row - first;
+                ui->name_hits[hit].row = 2 + top;
                 ui->name_hits[hit].left = ui->layout.rooms_w + 6;
                 ui->name_hits[hit].right = ui->layout.rooms_w + history_prefix_width(msg, width);
                 ui->name_hits[hit].uid = msg->is_self ? m->user_id : msg->user_id;
                 snprintf(ui->name_hits[hit].nick, sizeof(ui->name_hits[hit].nick), "%s", msg->nick);
             }
-            render_message_row(w, padding + logical_row + line - first, width, msg, m->nick, line,
-                               grouped, ignored, &text_offset);
+            for (int line = begin; line < end; line++)
+                render_message_row(w, top + line - begin, width, msg, m->nick, line, grouped,
+                                   ignored, &text_offset);
+            row = top - 1;
         }
-        logical_row += rows;
-        prev = msg;
-        prev_ignored = ignored;
+        if (separator) {
+            if (skip)
+                skip--;
+            else if (row >= 0)
+                render_date_separator(w, row--, width, msg->timestamp_ms);
+        }
     }
     char status[160];
     if (*offset)
