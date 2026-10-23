@@ -10,6 +10,8 @@ typedef enum {
     DB_STMT_PROFILE_ID,
     DB_STMT_PROFILE_NAME,
     DB_STMT_BUDDIES,
+    DB_STMT_BBS_STATUS,
+    DB_STMT_BBS_LIST,
     DB_STMT_COUNT
 } db_statement_id_t;
 

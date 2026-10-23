@@ -172,13 +172,17 @@ int ui_profile_input(ui_state_t *ui, const cli_model_t *m, int key, uint32_t cha
 static void put_line(WINDOW *window, int *logical, int offset, int visible, int width,
                      const char *line) {
     int rows = text_wrap_rows(line, width);
-    for (int i = 0; i < rows; i++, (*logical)++) {
-        if (*logical < offset || *logical >= offset + visible)
-            continue;
+    int first = offset > *logical ? offset - *logical : 0;
+    int last = offset + visible - *logical;
+    if (last > rows)
+        last = rows;
+    int byte = first < last ? text_row_offset(line, width, first) : 0;
+    for (int i = first; i < last; i++) {
         char part[1024];
-        text_wrap_line(line, width, i, part, sizeof(part));
-        mvwaddstr(window, 1 + *logical - offset, 2, part);
+        byte = text_wrap_next_line(line, width, byte, part, sizeof(part));
+        mvwaddstr(window, 1 + *logical + i - offset, 2, part);
     }
+    *logical += rows;
 }
 
 static void button(ui_state_t *ui, WINDOW *win, int *row, int *col, int width, const char *text,
@@ -223,9 +227,8 @@ void ui_redraw_profile(ui_state_t *ui, const cli_model_t *m) {
         for (int i = first, row = 2; i < PROFILE_FIELD_COUNT && row < h - 3; i++, row++) {
             mvwaddnstr(win, row, 2, PROFILE_FIELDS[i].label, 12);
             const char *value = profile_field_const(&ui->profile_draft, i);
-            int cursor = ui->profile_cursors[i], offset = 0, visible = w - 18;
-            while (text_width(value, offset, cursor) >= visible)
-                offset = text_next(value, offset);
+            int cursor = ui->profile_cursors[i], visible = w - 18;
+            int offset = text_view_offset(value, 0, cursor, visible);
             int end = text_cell_offset(value, offset, visible);
             if (ui->profile_focus == i)
                 wattron(win, A_REVERSE);

@@ -93,6 +93,20 @@ int text_cell_offset(const char *text, int begin, int cells) {
     return begin;
 }
 
+int text_view_offset(const char *text, int begin, int cursor, int columns) {
+    if (cursor < begin || columns <= 0)
+        return cursor;
+    int cells = text_width(text, begin, cursor);
+    /* Trim the measured prefix without measuring the same suffix again. */
+    while (cells >= columns && begin < cursor) {
+        uint32_t cp;
+        int length = decode(text + begin, &cp);
+        cells -= cell_width(cp);
+        begin += length;
+    }
+    return begin;
+}
+
 /* Use the same traversal for rendering, scrolling, and resize anchoring. */
 static int walk_rows(const char *text, int columns, int target_row, int target_offset) {
     int row = 0, used = 0, offset = 0;
@@ -134,8 +148,19 @@ int text_offset_row(const char *text, int columns, int offset) {
 void text_wrap_line(const char *text, int columns, int row, char *out, size_t capacity) {
     if (!capacity)
         return;
+    if (row < 0) {
+        out[0] = '\0';
+        return;
+    }
     int start = text_row_offset(text, columns, row);
-    int end = text_row_offset(text, columns, row + 1);
+    text_wrap_next_line(text, columns, start, out, capacity);
+}
+
+int text_wrap_next_line(const char *text, int columns, int offset, char *out, size_t capacity) {
+    int start = offset;
+    int end = start + text_row_offset(text + start, columns, 1);
+    if (!capacity)
+        return end;
     size_t written = 0;
     while (start < end) {
         uint32_t cp;
@@ -152,6 +177,7 @@ void text_wrap_line(const char *text, int columns, int row, char *out, size_t ca
         start += length;
     }
     out[written] = '\0';
+    return end;
 }
 
 int text_expand_emoji(const char *text, char *out, size_t capacity) {

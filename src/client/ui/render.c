@@ -254,9 +254,7 @@ static void render_message_row(WINDOW *w, int row, int width, const cli_msg_t *m
                  msg->nick, msg->type == MSG_ACTION ? " " : ": ");
     int indent = history_prefix_width(msg, width);
     int text_width = width - indent;
-    const char *remaining = msg->text + *text_offset;
-    text_wrap_line(remaining, text_width, 0, text, sizeof(text));
-    *text_offset += text_row_offset(remaining, text_width, 1);
+    *text_offset = text_wrap_next_line(msg->text, text_width, *text_offset, text, sizeof(text));
     if (!line && !grouped) {
         int color = system ? CP_SYSTEM : nick_color(msg->nick, my_nick);
         wattron(w, COLOR_PAIR(color) | (system ? A_DIM : A_BOLD));
@@ -429,11 +427,10 @@ void ui_redraw_input(ui_state_t *ui) {
         ui->input_offset = ui->input_cursor;
     if (ui->input_offset > ui->input_len)
         ui->input_offset = ui->input_len;
-    while (text_width(ui->input_buf, ui->input_offset, ui->input_cursor) >= visible)
-        ui->input_offset = text_next(ui->input_buf, ui->input_offset);
     /* History recall can replace the draft while retaining an old byte offset. */
-    while (((unsigned char)ui->input_buf[ui->input_offset] & 0xc0) == 0x80)
+    while (ui->input_offset > 0 && ((unsigned char)ui->input_buf[ui->input_offset] & 0xc0) == 0x80)
         ui->input_offset--;
+    ui->input_offset = text_view_offset(ui->input_buf, ui->input_offset, ui->input_cursor, visible);
     int end = text_cell_offset(ui->input_buf, ui->input_offset, visible);
     waddnstr(w, ui->input_buf + ui->input_offset, end - ui->input_offset);
     wmove(w, 0, 2 + text_width(ui->input_buf, ui->input_offset, ui->input_cursor));

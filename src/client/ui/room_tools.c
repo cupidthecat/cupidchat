@@ -193,9 +193,8 @@ void ui_redraw_room_control(ui_state_t *ui, const cli_model_t *m) {
         if (h < 10 && i != first)
             break;
         const char *value = i ? r->reason : r->target;
-        int cursor = r->cursors[i], offset = 0, visible = w - 14;
-        while (text_width(value, offset, cursor) >= visible)
-            offset = text_next(value, offset);
+        int cursor = r->cursors[i], visible = w - 14;
+        int offset = text_view_offset(value, 0, cursor, visible);
         int end = text_cell_offset(value, offset, visible);
         mvwaddstr(win, row, 2, i ? "Reason" : "Account");
         if (r->focus == i)

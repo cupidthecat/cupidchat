@@ -47,29 +47,38 @@ static void thread_row(sqlite3_stmt *q, bbs_thread_t *t) {
 }
 
 int db_bbs_status(cupid_db_t *db, uint64_t account, uint32_t *unread) {
-    sqlite3_stmt *q = NULL;
     const char *sql = "SELECT COUNT(*) FROM bbs_threads t LEFT JOIN bbs_reads r ON "
                       "r.thread_id=t.id AND r.account_id=? WHERE COALESCE(r.last_post,0)<(SELECT "
                       "MAX(id) FROM bbs_posts p WHERE p.thread_id=t.id)";
-    if (sqlite3_prepare_v2(db->handle, sql, -1, &q, NULL) != SQLITE_OK)
+    sqlite3_stmt *q = db_statement(db, DB_STMT_BBS_STATUS, sql);
+    if (!q)
         return -1;
     sqlite3_bind_int64(q, 1, (sqlite3_int64)account);
     int rc = sqlite3_step(q);
     if (rc == SQLITE_ROW)
         *unread = (uint32_t)sqlite3_column_int64(q, 0);
-    sqlite3_finalize(q);
+    db_statement_release(q);
     return rc == SQLITE_ROW ? 0 : -1;
 }
 
 int db_bbs_list(cupid_db_t *db, uint64_t account, uint32_t offset, bbs_thread_t *rows, int *count,
                 bool *more) {
-    char sql[1024];
-    snprintf(sql, sizeof(sql), "%s ORDER BY t.pinned DESC,8 DESC,t.id DESC LIMIT 21 OFFSET ?",
-             THREAD_COLUMNS);
-    sqlite3_stmt *q = NULL;
+    /* Select the page before counting posts and joining account read markers. */
+    const char *sql =
+        "SELECT t.id,t.title,u.username,t.created_at,t.pinned,t.locked,"
+        "(SELECT COUNT(*) FROM bbs_posts p WHERE p.thread_id=t.id),"
+        "page.last_post,COALESCE(r.last_post,0) FROM ("
+        "SELECT candidate.id,candidate.pinned,"
+        "(SELECT MAX(id) FROM bbs_posts p WHERE p.thread_id=candidate.id) AS last_post "
+        "FROM bbs_threads candidate JOIN users author ON author.id=candidate.author_id "
+        "ORDER BY candidate.pinned DESC,last_post DESC,candidate.id DESC LIMIT 21 OFFSET ?2"
+        ") page JOIN bbs_threads t ON t.id=page.id JOIN users u ON u.id=t.author_id "
+        "LEFT JOIN bbs_reads r ON r.thread_id=t.id AND r.account_id=?1 "
+        "ORDER BY page.pinned DESC,page.last_post DESC,page.id DESC";
+    sqlite3_stmt *q = db_statement(db, DB_STMT_BBS_LIST, sql);
     *count = 0;
     *more = false;
-    if (sqlite3_prepare_v2(db->handle, sql, -1, &q, NULL) != SQLITE_OK)
+    if (!q)
         return -1;
     sqlite3_bind_int64(q, 1, (sqlite3_int64)account);
     sqlite3_bind_int64(q, 2, offset);
@@ -81,7 +90,7 @@ int db_bbs_list(cupid_db_t *db, uint64_t account, uint32_t offset, bbs_thread_t 
         }
         thread_row(q, &rows[(*count)++]);
     }
-    sqlite3_finalize(q);
+    db_statement_release(q);
     return rc == SQLITE_ROW || rc == SQLITE_DONE ? 0 : -1;
 }
 
