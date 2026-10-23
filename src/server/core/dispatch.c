@@ -131,6 +131,20 @@ static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
 
 /* Handler: CMSG_JOIN */
 
+static int join_error(conn_t *c, error_code_t code, const char *message, const char *room,
+                      server_state_t *s) {
+    tlv_builder_t b;
+    tlv_builder_init(&b);
+    tlv_put_u16(&b, TAG_ERROR_CODE, code);
+    tlv_put_str(&b, TAG_ERROR_MSG, message);
+    tlv_put_str(&b, TAG_SCOPE, "join");
+    tlv_put_str(&b, TAG_ROOM, room);
+    int rc = conn_send_frame(c, SMSG_ERROR, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), b.buf,
+                             (uint32_t)b.len, s->cfg);
+    tlv_builder_free(&b);
+    return rc;
+}
+
 static int handle_join(conn_t *c, const frame_t *f, server_state_t *s) {
     char room_name[MAX_ROOM_LEN + 1] = {0};
     if (!tlv_read_str(f->payload, f->hdr.length, TAG_ROOM, room_name, sizeof(room_name))) {
@@ -139,10 +153,29 @@ static int handle_join(conn_t *c, const frame_t *f, server_state_t *s) {
     if (!room_valid(room_name))
         return send_error(c, ERR_PROTOCOL, "invalid room name (a-z A-Z 0-9 _ -)", s);
 
-    bool is_new = (server_find_room(s, room_name) < 0);
+    int existing = server_find_room(s, room_name);
+    bool already_joined = existing >= 0 && conn_is_room_member(c, existing);
+    if (!rate_consume(&c->rate)) {
+        if (already_joined)
+            return send_error(c, ERR_RATE_LIMITED, "Slow down", s);
+        return join_error(c, ERR_RATE_LIMITED, "Slow down before joining another room", room_name,
+                          s);
+    }
+    if (!already_joined && c->room_count >= MAX_ROOMS_PER_USER)
+        return join_error(c, ERR_PERMISSION_DENIED, "Leave a room first (64 joined rooms maximum)",
+                          room_name, s);
+    if (!already_joined && existing >= 0 && s->rooms[existing]->member_count >= ROOM_MEMBER_SLOTS)
+        return join_error(c, ERR_PERMISSION_DENIED, "That room is full", room_name, s);
+    bool is_new = existing < 0;
     int ri = server_get_or_create_room(s, room_name, c->user_id, c->account_id);
     if (ri < 0)
-        return send_error(c, ERR_UNKNOWN, "too many rooms", s);
+        return join_error(c, ERR_UNKNOWN, "Could not create or join that room", room_name, s);
+
+    if (!already_joined) {
+        if (!room_add_member(s->rooms[ri], c->fd))
+            return join_error(c, ERR_PERMISSION_DENIED, "That room is full", room_name, s);
+        conn_add_room(c, ri);
+    }
 
     /* if we just created the room, broadcast SMSG_ROOM_CREATED to all clients */
     if (is_new) {
@@ -172,10 +205,7 @@ static int handle_join(conn_t *c, const frame_t *f, server_state_t *s) {
         }
     }
 
-    if (!conn_is_room_member(c, ri)) {
-        conn_add_room(c, ri);
-        room_add_member(s->rooms[ri], c->fd);
-
+    if (!already_joined) {
         /* broadcast USER_JOINED to existing members */
         tlv_builder_t b;
         tlv_builder_init(&b);

@@ -168,6 +168,9 @@ Type `/help` to open the command reference modal. All commands start with `/`.
 | `/topic [text]` | Show or set the room topic |
 | `/delroom [name]` | Delete a room you own |
 
+Each account can join up to 64 rooms at once. Leave one before joining another
+when the limit is reached. Join requests use the connection rate limit.
+
 **Messaging**
 
 | Command | Description |

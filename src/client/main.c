@@ -317,6 +317,14 @@ static void on_frame(const frame_t *f, void *ctx_ptr) {
             char msg[256] = {0};
             tlv_read_u16(p, pl, TAG_ERROR_CODE, &code);
             tlv_read_str(p, pl, TAG_ERROR_MSG, msg, sizeof(msg));
+            char scope[16] = {0}, room[CLI_ROOM_MAX] = {0};
+            tlv_read_str(p, pl, TAG_SCOPE, scope, sizeof(scope));
+            tlv_read_str(p, pl, TAG_ROOM, room, sizeof(room));
+            if (!strcmp(scope, "join")) {
+                cli_room_t *rejected = model_find_room(m, room);
+                if (rejected)
+                    rejected->joined = false;
+            }
             uint32_t request = 0;
             if (tlv_read_u32(p, pl, TAG_REQUEST_ID, &request)) {
                 if (ctx->ui->show_profile && request == ctx->ui->profile_request) {
