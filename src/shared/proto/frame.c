@@ -68,13 +68,13 @@ int frame_parser_push(frame_parser_t *p, const uint8_t *data, size_t n) {
 }
 
 parse_result_t frame_parser_next(frame_parser_t *p, frame_t *out) {
-    buf_compact(p);
-
     /* need at least a full header */
-    if (p->len < FRAME_HEADER_SIZE)
+    size_t available = p->len - p->consumed;
+    if (available < FRAME_HEADER_SIZE)
         return PARSE_NEED_MORE;
 
-    const uint8_t *hdr = p->buf;
+    /* Keep unread frames in place. The next push reclaims the consumed prefix. */
+    const uint8_t *hdr = p->buf + p->consumed;
 
     uint32_t length;
     uint16_t type, flags;
@@ -93,7 +93,7 @@ parse_result_t frame_parser_next(frame_parser_t *p, frame_t *out) {
         return PARSE_ERROR;
 
     size_t total = FRAME_HEADER_SIZE + length;
-    if (p->len < total)
+    if (available < total)
         return PARSE_NEED_MORE;
 
     /* build frame */
@@ -107,7 +107,7 @@ parse_result_t frame_parser_next(frame_parser_t *p, frame_t *out) {
         out->payload = malloc(length);
         if (!out->payload)
             return PARSE_ERROR;
-        memcpy(out->payload, p->buf + FRAME_HEADER_SIZE, length);
+        memcpy(out->payload, hdr + FRAME_HEADER_SIZE, length);
     }
 
     p->consumed += total;

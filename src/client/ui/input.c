@@ -132,7 +132,7 @@ static void insert_text(ui_state_t *ui, const char *text) {
     memcpy(ui->input_buf + ui->input_cursor, text, (size_t)length);
     ui->input_len += length;
     ui->input_cursor += length;
-    ui->dirty = true;
+    ui->input_dirty = true;
 }
 
 /* Complete only an unambiguous prefix; an ambiguous match extends to the
@@ -372,7 +372,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                 out_line[copy] = '\0';
                 hist_push(ui, out_line);
                 input_clear(ui);
-                ui->dirty = true;
+                ui->input_dirty = true;
                 return 1;
             }
 
@@ -386,7 +386,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                         (size_t)(ui->input_len - ui->input_cursor + 1));
                 ui->input_len -= ui->input_cursor - pos;
                 ui->input_cursor = pos;
-                ui->dirty = true;
+                ui->input_dirty = true;
             }
             break;
 
@@ -396,7 +396,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                 memmove(ui->input_buf + ui->input_cursor, ui->input_buf + end,
                         (size_t)(ui->input_len - end + 1));
                 ui->input_len -= end - ui->input_cursor;
-                ui->dirty = true;
+                ui->input_dirty = true;
             }
             break;
 
@@ -404,33 +404,33 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
         case KEY_LEFT:
             if (ui->input_cursor > 0) {
                 ui->input_cursor = text_prev(ui->input_buf, ui->input_cursor);
-                ui->dirty = true;
+                ui->input_dirty = true;
             }
             break;
 
         case KEY_RIGHT:
             if (ui->input_cursor < ui->input_len) {
                 ui->input_cursor = text_next(ui->input_buf, ui->input_cursor);
-                ui->dirty = true;
+                ui->input_dirty = true;
             }
             break;
 
         case KEY_HOME:
         case 0x01: /* Ctrl-A */
             ui->input_cursor = 0;
-            ui->dirty = true;
+            ui->input_dirty = true;
             break;
 
         case KEY_END:
         case 0x05: /* Ctrl-E */
             ui->input_cursor = ui->input_len;
-            ui->dirty = true;
+            ui->input_dirty = true;
             break;
 
         case 0x0B: /* Ctrl-K: kill to end of line */
             ui->input_buf[ui->input_cursor] = '\0';
             ui->input_len = ui->input_cursor;
-            ui->dirty = true;
+            ui->input_dirty = true;
             break;
 
         /* Up/Down: history when typing, sidebar nav when empty */
@@ -449,7 +449,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                 memcpy(ui->input_buf, h, (size_t)l);
                 ui->input_buf[l] = '\0';
                 ui->input_len = ui->input_cursor = l;
-                ui->dirty = true;
+                ui->input_dirty = true;
             }
             break;
 
@@ -470,7 +470,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                     ui->input_buf[l] = '\0';
                     ui->input_len = ui->input_cursor = l;
                 }
-                ui->dirty = true;
+                ui->input_dirty = true;
             }
             break;
 
@@ -480,7 +480,8 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
                 complete_nick(ui, m);
             else
                 ui->nav_cursor++;
-            ui->dirty = true;
+            if (!ui->input_len)
+                ui->dirty = true;
             break;
 
         case KEY_BTAB: /* Shift-Tab */
@@ -517,7 +518,7 @@ int ui_input_tick(ui_state_t *ui, const cli_model_t *m, char *out_line, int out_
 /* Scroll */
 
 void ui_scroll(ui_state_t *ui, cli_model_t *m, int delta) {
-    const cli_msg_t *buf = NULL;
+    cli_msg_t *buf = NULL;
     int cap = 0, head = 0, len = 0, *offset = NULL;
     if (m->active_room >= 0 && m->active_room < m->room_count) {
         cli_room_t *r = &m->rooms[m->active_room];

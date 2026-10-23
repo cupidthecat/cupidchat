@@ -23,6 +23,10 @@ static ssize_t plain_write(transport_t *t, const void *buf, size_t n) {
     return r;
 }
 
+static ssize_t plain_writev(transport_t *t, const struct iovec *iov, int count) {
+    return writev(t->fd, iov, count);
+}
+
 static int plain_handshake(transport_t *t) {
     (void)t;
     return 0; /* no-op for plain TCP */
@@ -45,6 +49,7 @@ transport_t *transport_plain_new(int fd) {
     t->mode = TRANSPORT_PLAIN;
     t->read = plain_read;
     t->write = plain_write;
+    t->writev = plain_writev;
     t->handshake = plain_handshake;
     t->close = plain_close;
     t->tls_ctx = NULL;

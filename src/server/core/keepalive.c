@@ -28,8 +28,7 @@ static void send_ping(conn_t *c, server_state_t *s) {
 void keepalive_tick(server_state_t *s) {
     time_t now = time(NULL);
 
-    for (int fd = 0; fd < s->conns_size; fd++) {
-        conn_t *c = s->conns[fd];
+    for (conn_t *c = s->active_head; c; c = c->active_next) {
         if (!c || c->state == CONN_CLOSING)
             continue;
 

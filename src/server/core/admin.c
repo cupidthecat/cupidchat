@@ -108,8 +108,7 @@ static int broadcast_poll(server_state_t *s, bool created) {
         tlv_builder_free(&b);
         return -1;
     }
-    for (int fd = 0; fd < s->conns_size; fd++) {
-        conn_t *c = s->conns[fd];
+    for (conn_t *c = s->active_head; c; c = c->active_next) {
         if (c && c->state == CONN_AUTHED)
             conn_send_frame(c, SMSG_POLL, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), b.buf,
                             (uint32_t)b.len, s->cfg);
@@ -206,8 +205,7 @@ int server_admin_command(server_state_t *s, conn_t *c, const frame_t *f) {
                     *p = '\n';
         if (db_set_setting(s->db, action, body) < 0)
             return fail(s, c, ERR_UNKNOWN, "Could not save server message");
-        for (int fd = 0; fd < s->conns_size; fd++) {
-            conn_t *peer = s->conns[fd];
+        for (conn_t *peer = s->active_head; peer; peer = peer->active_next) {
             if (peer && peer->state == CONN_AUTHED)
                 notice(s, peer, action, body, c->base_nick);
         }

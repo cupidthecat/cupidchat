@@ -130,8 +130,27 @@ int conn_flush(conn_t *c) {
         obuf_node_t *node = c->obuf_head;
         size_t remaining = node->len - node->sent;
 
-        ssize_t n = c->transport->write(c->transport, node->data + node->sent, remaining);
+        ssize_t n;
+        if (c->transport->writev && node->next) {
+            /* Keep frame buffers in queue order, including any partial head. */
+            struct iovec iov[32];
+            int count = 0;
+            size_t bytes = 0;
+            for (obuf_node_t *part = node; part && count < 32 && bytes < 65536; part = part->next) {
+                size_t length = part->len - part->sent;
+                if (length > 65536 - bytes)
+                    length = 65536 - bytes;
+                iov[count++] = (struct iovec){part->data + part->sent, length};
+                bytes += length;
+            }
+            n = c->transport->writev(c->transport, iov, count);
+        } else {
+            /* TLS and transports without scatter/gather keep their write path. */
+            n = c->transport->write(c->transport, node->data + node->sent, remaining);
+        }
         if (n < 0) {
+            if (errno == EINTR)
+                continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             return -1; /* error -> close */
@@ -139,15 +158,21 @@ int conn_flush(conn_t *c) {
         if (n == 0)
             return -1; /* EOF */
 
-        node->sent += (size_t)n;
         c->obuf_bytes -= (size_t)n;
-
-        if (node->sent == node->len) {
-            c->obuf_head = node->next;
-            if (!c->obuf_head)
-                c->obuf_tail = NULL;
-            free(node->data);
-            free(node);
+        size_t written = (size_t)n;
+        while (written && c->obuf_head) {
+            node = c->obuf_head;
+            remaining = node->len - node->sent;
+            size_t sent = written < remaining ? written : remaining;
+            node->sent += sent;
+            written -= sent;
+            if (node->sent == node->len) {
+                c->obuf_head = node->next;
+                if (!c->obuf_head)
+                    c->obuf_tail = NULL;
+                free(node->data);
+                free(node);
+            }
         }
     }
 

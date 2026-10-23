@@ -1510,12 +1510,14 @@ int main(int argc, char **argv) {
     frame_ctx_t fctx = {&model, &cc, &ui, &last_users_refresh, &last_rooms_refresh};
 
     char input_line[4096];
+    bool input_pending = false;
 
     while (!g_quit) {
         if (cc.send_failed) {
             model_set_status(&model, "Send failed or outgoing queue full; reconnect to continue",
                              999);
             model.status = CLI_DISCONNECTED;
+            ui.dirty = true;
             ui_redraw(&ui, &model);
             sleep(2);
             break;
@@ -1525,11 +1527,14 @@ int main(int argc, char **argv) {
             ui_resize(&ui);
         }
 
-        if (ui.dirty)
+        if (ui.dirty || ui.input_dirty)
             ui_redraw(&ui, &model);
 
-        struct pollfd pfd = {.fd = cc.fd, .events = POLLIN | (cc.output_head ? POLLOUT : 0)};
-        int pr = poll(&pfd, 1, 50); /* 50ms timeout for keyboard */
+        struct pollfd pfds[] = {
+            {.fd = cc.fd, .events = POLLIN | (cc.output_head ? POLLOUT : 0)},
+            {.fd = STDIN_FILENO, .events = POLLIN},
+        };
+        int pr = poll(pfds, 2, cc.read_pending || input_pending ? 0 : 250);
 
         if (pr < 0) {
             if (errno == EINTR)
@@ -1538,7 +1543,9 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if (pfd.revents & (POLLHUP | POLLERR)) {
+        if (pfds[1].revents & (POLLHUP | POLLERR | POLLNVAL))
+            break;
+        if (pfds[0].revents & (POLLHUP | POLLERR)) {
             model_set_status(&model, "Server disconnected", 999);
             model.status = CLI_DISCONNECTED;
             ui.dirty = true;
@@ -1549,10 +1556,10 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if ((pfd.revents & POLLOUT) && client_flush(&cc) < 0)
+        if ((pfds[0].revents & POLLOUT) && client_flush(&cc) < 0)
             continue;
 
-        if (pfd.revents & POLLIN) {
+        if (cc.read_pending || (pfds[0].revents & POLLIN)) {
             int rr = client_read_frames(&cc, on_frame, &fctx);
             if (rr != 0) {
                 /* rr==1: clean close (server sent FIN -  may have preceded an
@@ -1574,7 +1581,10 @@ int main(int argc, char **argv) {
 
         /* keyboard (non-blocking) */
         int kr;
-        while ((kr = ui_input_tick(&ui, &model, input_line, sizeof(input_line))) != ERR) {
+        int keys = 0;
+        while (keys < 256 &&
+               (kr = ui_input_tick(&ui, &model, input_line, sizeof(input_line))) != ERR) {
+            keys++;
             ui_clamp_navigation(&ui, &model);
             if (kr == UI_RESIZE) {
                 ui_resize(&ui);
@@ -1785,6 +1795,8 @@ int main(int argc, char **argv) {
                 ui.dirty = true;
             }
         }
+
+        input_pending = keys == 256;
 
         /* periodic refreshes -  fast enough to feel live, not so fast as to spam */
         time_t now = time(NULL);

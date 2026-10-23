@@ -22,12 +22,12 @@ int db_init_room_tools(cupid_db_t *db) {
 
 int db_room_access(cupid_db_t *db, const char *room, uint64_t account, room_access_t *access) {
     memset(access, 0, sizeof(*access));
-    sqlite3_stmt *q = NULL;
     const char *sql =
         "SELECT a.is_operator,a.banned,a.invited_at,COALESCE(u.username,'server'),a.reason FROM "
         "room_access "
         "a LEFT JOIN users u ON u.id=a.inviter_id WHERE a.room_name=? AND a.account_id=?";
-    if (sqlite3_prepare_v2(db->handle, sql, -1, &q, NULL) != SQLITE_OK)
+    sqlite3_stmt *q = db_statement(db, DB_STMT_ROOM_ACCESS, sql);
+    if (!q)
         return -1;
     sqlite3_bind_text(q, 1, room, -1, SQLITE_STATIC);
     sqlite3_bind_int64(q, 2, (sqlite3_int64)account);
@@ -43,7 +43,7 @@ int db_room_access(cupid_db_t *db, const char *room, uint64_t account, room_acce
         snprintf(access->inviter, sizeof(access->inviter), "%s", sqlite3_column_text(q, 3));
         snprintf(access->reason, sizeof(access->reason), "%s", sqlite3_column_text(q, 4));
     }
-    sqlite3_finalize(q);
+    db_statement_release(q);
     return rc == SQLITE_ROW || rc == SQLITE_DONE ? 0 : -1;
 }
 

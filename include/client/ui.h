@@ -52,6 +52,7 @@ typedef struct {
     room_control_state_t room_control;
     void *win_topbar, *win_topic, *win_rooms, *win_chat, *win_users, *win_input;
     bool show_users, dirty, show_help_modal, show_emoji_modal, show_buddies_modal, confirm_quit;
+    bool input_dirty;
     bool show_poll, poll_pending;
     int poll_cursor, poll_question_row;
     bool poll_requested;

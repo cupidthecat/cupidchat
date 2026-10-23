@@ -120,10 +120,42 @@ static void accept_client(server_state_t *s, int listen_fd, bool tls) {
 
 static void read_client(server_state_t *s, conn_t *c) {
     uint8_t buf[READ_BUF];
+    size_t bytes = 0;
+    int frames = 0;
+    c->read_pending = false;
 
     while (c->state != CONN_CLOSING) {
+        frame_t frame;
+        parse_result_t pr = frame_parser_next(&c->parser, &frame);
+        if (pr == PARSE_FRAME_OK) {
+            if (s->cfg->verbose)
+                frame_dump(&frame, STDERR_FILENO);
+            int rc = dispatch_frame(c, &frame, s);
+            frame_free(&frame);
+            if (rc < 0)
+                c->state = CONN_CLOSING;
+            if (c->state == CONN_CLOSING)
+                return;
+            if (++frames >= 256) {
+                c->read_pending = true;
+                return;
+            }
+            continue;
+        }
+        if (pr == PARSE_ERROR) {
+            LOG_WARN("fd=%d bad frame, closing", c->fd);
+            c->state = CONN_CLOSING;
+            return;
+        }
+        /* Yield to other connections, including when TLS has buffered input. */
+        if (bytes >= READ_BUF) {
+            c->read_pending = true;
+            return;
+        }
         ssize_t n = c->transport->read(c->transport, buf, sizeof(buf));
         if (n < 0) {
+            if (errno == EINTR)
+                continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             LOG_INFO("fd=%d read error: %s, closing", c->fd, strerror(errno));
@@ -141,23 +173,7 @@ static void read_client(server_state_t *s, conn_t *c) {
             c->state = CONN_CLOSING;
             break;
         }
-
-        frame_t frame;
-        parse_result_t pr;
-        while ((pr = frame_parser_next(&c->parser, &frame)) == PARSE_FRAME_OK) {
-            if (s->cfg->verbose)
-                frame_dump(&frame, STDERR_FILENO);
-            int rc = dispatch_frame(c, &frame, s);
-            frame_free(&frame);
-            if (rc < 0) {
-                c->state = CONN_CLOSING;
-                break;
-            }
-        }
-        if (pr == PARSE_ERROR) {
-            LOG_WARN("fd=%d bad frame, closing", c->fd);
-            c->state = CONN_CLOSING;
-        }
+        bytes += (size_t)n;
     }
 }
 
@@ -221,7 +237,14 @@ int server_run(server_state_t *s) {
     LOG_INFO("event loop started (plain_fd=%d tls_fd=%d)", s->listen_fd_plain, s->listen_fd_tls);
 
     while (g_running) {
-        int n = epoll_wait(s->epoll_fd, events, MAX_EVENTS, -1);
+        int timeout = -1;
+        for (conn_t *c = s->active_head; c; c = c->active_next) {
+            if (c->read_pending && c->state != CONN_CLOSING) {
+                read_client(s, c);
+                timeout = 0;
+            }
+        }
+        int n = epoll_wait(s->epoll_fd, events, MAX_EVENTS, timeout);
         if (n < 0) {
             if (errno == EINTR)
                 continue;
@@ -283,8 +306,8 @@ int server_run(server_state_t *s) {
         /* Timer-driven closes must not depend on another event from the peer.
          * Allow error replies to drain for at most two seconds. */
         time_t now = time(NULL);
-        for (int fd = 0; fd < s->conns_size; fd++) {
-            conn_t *c = s->conns[fd];
+        for (conn_t *c = s->active_head, *next; c; c = next) {
+            next = c->active_next;
             if (!c || c->state != CONN_CLOSING)
                 continue;
             if (!c->close_deadline)

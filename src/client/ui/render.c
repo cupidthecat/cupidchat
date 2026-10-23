@@ -226,7 +226,8 @@ static bool can_group(const cli_msg_t *prev, const cli_msg_t *msg) {
 }
 
 static void render_message_row(WINDOW *w, int row, int width, const cli_msg_t *msg,
-                               const char *my_nick, int line, bool grouped, bool ignored) {
+                               const char *my_nick, int line, bool grouped, bool ignored,
+                               int *text_offset) {
     char prefix[96], text[CLI_MSG_MAX];
     time_t ts = (time_t)(msg->timestamp_ms / 1000);
     struct tm stamp;
@@ -253,7 +254,9 @@ static void render_message_row(WINDOW *w, int row, int width, const cli_msg_t *m
                  msg->nick, msg->type == MSG_ACTION ? " " : ": ");
     int indent = history_prefix_width(msg, width);
     int text_width = width - indent;
-    text_wrap_line(msg->text, text_width, line, text, sizeof(text));
+    const char *remaining = msg->text + *text_offset;
+    text_wrap_line(remaining, text_width, 0, text, sizeof(text));
+    *text_offset += text_row_offset(remaining, text_width, 1);
     if (!line && !grouped) {
         int color = system ? CP_SYSTEM : nick_color(msg->nick, my_nick);
         wattron(w, COLOR_PAIR(color) | (system ? A_DIM : A_BOLD));
@@ -274,7 +277,7 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
     if (!w)
         return;
     werase(w);
-    const cli_msg_t *buf = NULL;
+    cli_msg_t *buf = NULL;
     int cap = 0, head = 0, len = 0, *offset = NULL, *view_width = NULL, *unread = NULL;
     if (m->active_room >= 0 && m->active_room < m->room_count) {
         cli_room_t *r = &m->rooms[m->active_room];
@@ -321,7 +324,7 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
     const cli_msg_t *prev = NULL;
     bool prev_ignored = false;
     for (int i = 0; i < len && logical_row < last; i++) {
-        const cli_msg_t *msg = &buf[(oldest + i) % cap];
+        cli_msg_t *msg = &buf[(oldest + i) % cap];
         bool separator = !prev || !history_same_day(prev->timestamp_ms, msg->timestamp_ms);
         if (separator) {
             if (logical_row >= first && logical_row < last)
@@ -332,6 +335,10 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
             (msg->type == MSG_CHAT || msg->type == MSG_ACTION) && model_is_ignored(m, msg->nick);
         int rows = history_message_rows(msg, width, ignored);
         int begin = first > logical_row ? first - logical_row : 0;
+        int text_offset =
+            begin < rows && !ignored
+                ? text_row_offset(msg->text, width - history_prefix_width(msg, width), begin)
+                : 0;
         for (int line = begin; line < rows && logical_row + line < last; line++) {
             bool grouped = !separator && !prev_ignored && can_group(prev, msg);
             if (!line && !grouped && !ignored && !msg->is_history && msg->user_id &&
@@ -345,7 +352,7 @@ void ui_redraw_chat(ui_state_t *ui, cli_model_t *m) {
                 snprintf(ui->name_hits[hit].nick, sizeof(ui->name_hits[hit].nick), "%s", msg->nick);
             }
             render_message_row(w, padding + logical_row + line - first, width, msg, m->nick, line,
-                               grouped, ignored);
+                               grouped, ignored, &text_offset);
         }
         logical_row += rows;
         prev = msg;
@@ -623,6 +630,13 @@ static void ui_redraw_buddies_modal(ui_state_t *ui, const cli_model_t *m) {
 /* Full redraw */
 
 void ui_redraw(ui_state_t *ui, cli_model_t *m) {
+    if (!ui->dirty && ui->input_dirty) {
+        ui_redraw_input(ui);
+        doupdate();
+        ui->input_dirty = false;
+        return;
+    }
+    ui->input_dirty = false;
     erase();
     if (ui->layout.too_small) {
         mvaddnstr(0, 0, "Resize to at least 40x8. Ctrl+Q quits.", ui->layout.cols);

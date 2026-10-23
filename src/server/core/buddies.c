@@ -78,8 +78,7 @@ void server_buddy_presence(server_state_t *s, uint64_t account, bool offline) {
         tlv_builder_free(&b);
         return;
     }
-    for (int fd = 0; fd < s->conns_size; fd++) {
-        conn_t *c = s->conns[fd];
+    for (conn_t *c = s->active_head; c; c = c->active_next) {
         if (!c || c->state != CONN_AUTHED || !c->account_id)
             continue;
         for (int i = 0; i < c->buddy_count; i++) {

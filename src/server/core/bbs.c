@@ -31,8 +31,7 @@ static void changed(server_state_t *s, conn_t *actor, uint64_t thread, uint64_t 
     tlv_put_u64(&b, TAG_POST_ID, post);
     tlv_put_str(&b, TAG_BASE_NICK, actor->base_nick);
     tlv_put_str(&b, TAG_SCOPE, action);
-    for (int fd = 0; fd < s->conns_size; fd++) {
-        conn_t *c = s->conns[fd];
+    for (conn_t *c = s->active_head; c; c = c->active_next) {
         if (c && c->state == CONN_AUTHED)
             conn_send_frame(c, SMSG_BBS_CHANGED, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s),
                             b.buf, (uint32_t)b.len, s->cfg);

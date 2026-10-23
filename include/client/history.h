@@ -12,8 +12,7 @@ void history_iter_init(history_iter_t *it, const cli_msg_t *buf, int cap, int he
 const cli_msg_t *history_iter_next(history_iter_t *it);
 bool history_same_day(uint64_t a, uint64_t b);
 int history_prefix_width(const cli_msg_t *msg, int width);
-int history_message_rows(const cli_msg_t *msg, int width, bool ignored);
-int history_total_rows(const cli_msg_t *buf, int cap, int head, int len, int width,
-                       const cli_model_t *m);
-int history_reflow_scroll(const cli_msg_t *buf, int cap, int head, int len, int old_width,
-                          int new_width, int scroll, const cli_model_t *m);
+int history_message_rows(cli_msg_t *msg, int width, bool ignored);
+int history_total_rows(cli_msg_t *buf, int cap, int head, int len, int width, const cli_model_t *m);
+int history_reflow_scroll(cli_msg_t *buf, int cap, int head, int len, int old_width, int new_width,
+                          int scroll, const cli_model_t *m);

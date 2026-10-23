@@ -25,6 +25,7 @@ typedef struct {
     char nick[CLI_NICK_MAX], base_nick[CLI_NICK_MAX], text[CLI_MSG_MAX];
     bool is_self, is_dm, is_highlight, is_history;
     cli_msg_type_t type;
+    int wrap_columns, wrap_rows;
 } cli_msg_t;
 
 typedef struct {

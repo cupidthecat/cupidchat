@@ -7,6 +7,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 **Server**
 
 - `epoll`-based event loop with `timerfd` keepalive
+- Batched TCP output and connection scans that visit connected clients only
 - Persistent room operators, account bans, topic locks, and room invitations
 - Persistent BBS threads and replies, unread markers, and clickable author profiles
 - Persistent account moderation, admin roles, editable MOTD and banners, and server polls
@@ -21,6 +22,8 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 
 - ncurses TUI: room sidebar, topic bar, chat pane, status bar, user list
 - Rooms and direct messages (DMs) with separate scroll state per conversation
+- Keyboard input wakes the client immediately; draft edits redraw only the input line
+- Cached message wrapping for scrolling through retained history
 - Nonblocking outgoing queue capped at 256 KiB, with partial-write handling
 - Clickable account profiles and a public profile editor (F7 or `/profile`)
 - Password-masked sign-in and account creation forms
@@ -93,6 +96,15 @@ Build outputs:
 The build runs `scripts/gen_sounds.py` automatically to embed the WAV files in `sounds/` as C byte arrays compiled into the client binary. The `sounds/` directory is only needed at build time.
 
 Builds include AddressSanitizer and UBSan (`-fsanitize=address,undefined`) by default. Pass `SAN=` for a build without sanitizers.
+
+For everyday use, build both programs without sanitizers in a separate object directory:
+
+```bash
+make SAN= BUILDDIR=build-release all
+```
+
+The separate directory avoids mixing objects compiled with different sanitizer settings.
+Rebuild the client as well as the server after an update to receive client performance changes.
 
 ## Quick start
 
