@@ -81,6 +81,30 @@ The upgrade preserves rooms, messages, topics, accounts, and buddy lists.
 Unfinished sign-ins close after five minutes. Verbose frame logs omit login
 and registration payloads.
 
+### Optional server password
+
+To require a shared password in addition to each user's account password,
+create `/etc/cupidchat/server-password` containing one password of 1-255 bytes.
+A final LF or CRLF is accepted. Set its owner to `root:cupidchat` and mode to
+`0640`, then add this path to `/etc/cupidchat/server.env`:
+
+```ini
+CUPIDCHAT_SERVER_PASSWORD_FILE=/etc/cupidchat/server-password
+```
+
+Restart `cupidchat` to load the file. The service reads the environment setting
+directly; its `ExecStart` does not need to change. Missing, empty, malformed,
+or unreadable files stop startup instead of allowing access without the lock.
+Changing the file requires a restart. To remove the shared-password requirement,
+remove the environment setting and restart; account sign-in remains required.
+
+Rebuild clients to get the masked **Server key** field on both sign-in forms.
+Users enter the shared password there, then authenticate with their own account.
+The shared password is checked before an account can be created or authenticated.
+Old clients cannot sign in to a locked server. The welcome message and server
+capabilities are still public. Keep connections on Tailscale or use TLS because
+the password file setting does not encrypt network traffic.
+
 ### First admins
 
 After the upgraded service has initialized its database, stop it and make a

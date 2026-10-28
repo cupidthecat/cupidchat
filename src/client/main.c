@@ -230,6 +230,8 @@ static void submit_auth(const cli_model_t *m, client_conn_t *cc, ui_state_t *ui)
                         : !ui->auth_password[0] ? "Enter a password"
                         : ui->auth_register && strcmp(ui->auth_password, ui->auth_confirm)
                             ? "Passwords do not match"
+                        : ui->auth_server_required && !ui->auth_server_password[0]
+                            ? "Enter the server password (Server key)"
                             : NULL;
     ui->modal_dirty = true;
     if (error) {
@@ -240,8 +242,8 @@ static void submit_auth(const cli_model_t *m, client_conn_t *cc, ui_state_t *ui)
         ui->auth_pending = ui->auth_deferred = true;
         return;
     }
-    int rc = ui->auth_register ? client_send_register(cc, ui->auth_name, ui->auth_password)
-                               : client_send_login(cc, ui->auth_name, ui->auth_password);
+    int rc = client_send_auth(cc, ui->auth_register, ui->auth_name, ui->auth_password,
+                              ui->auth_server_required ? ui->auth_server_password : NULL);
     ui->auth_pending = rc == 0;
     snprintf(ui->auth_error, sizeof(ui->auth_error), "%s",
              rc < 0 ? "Could not send sign-in request" : "");
@@ -347,6 +349,7 @@ static void apply_frame(const frame_t *f, void *ctx_ptr) {
             tlv_read_str(p, pl, TAG_BANNER, m->banner, sizeof(m->banner));
             m->session_id = sid;
             tlv_read_u32(p, pl, TAG_CAPS, &m->server_caps);
+            ctx->ui->auth_server_required = (m->server_caps & CAP_SERVER_PASSWORD) != 0;
             m->user_id = sid; /* our own UID for self-message detection */
             m->status = CLI_SIGNIN;
             ctx->ui->show_auth = true;

@@ -180,12 +180,61 @@ static void test_screen(void) {
     puts("  PASS  wrapped messages, resize recovery, mouse controls, and quit dialog");
 }
 
+static void test_locked_auth(void) {
+    FILE *output = tmpfile(), *input = tmpfile();
+    assert(output && input);
+    SCREEN *screen = newterm("xterm", output, input);
+    assert(screen);
+    cli_model_t m;
+    model_init(&m);
+    ui_state_t ui = {0};
+    ui.show_auth = ui.auth_register = ui.auth_server_required = true;
+    strcpy(ui.auth_name, "alice");
+    strcpy(ui.auth_password, "account-password");
+    strcpy(ui.auth_confirm, "account-password");
+    strcpy(ui.auth_server_password, "server-secret");
+    ui.auth_cursors[1] = ui.auth_cursors[2] = 16;
+    ui.auth_cursors[3] = 13;
+    /* The account-password Enter advances to confirmation and then server key. */
+    ui.auth_focus = 1;
+    assert(ui_auth_input(&ui, '\n', 0, false) == UI_NONE && ui.auth_focus == 2);
+    assert(ui_auth_input(&ui, '\n', 0, false) == UI_NONE && ui.auth_focus == 3);
+    assert(ui_auth_input(&ui, '\n', 0, false) == UI_AUTH_SUBMIT);
+    const int sizes[][2] = {{24, 100}, {8, 40}};
+    for (size_t size = 0; size < sizeof(sizes) / sizeof(sizes[0]); size++) {
+        assert(resizeterm(sizes[size][0], sizes[size][1]) == OK);
+        ui_resize(&ui);
+        ui_redraw_auth(&ui, &m);
+        WINDOW *modal = ui.modal_windows[UI_MODAL_AUTH];
+        assert(modal);
+        bool found_key = false, found_mask = false;
+        for (int row = 1; row < getmaxy(modal) - 1; row++) {
+            char line[128];
+            mvwinnstr(modal, row, 0, line, sizeof(line) - 1);
+            assert(!strstr(line, "server-secret") && !strstr(line, "account-password"));
+            found_key |= strstr(line, "Server key") != NULL;
+            found_mask |= strstr(line, "*************") != NULL;
+        }
+        assert(found_key && found_mask);
+    }
+    ui_auth_clear_secrets(&ui);
+    assert(!ui.auth_password[0] && !ui.auth_confirm[0] && !ui.auth_server_password[0]);
+    assert(!ui.auth_cursors[1] && !ui.auth_cursors[2] && !ui.auth_cursors[3]);
+    ui_free(&ui);
+    model_free(&m);
+    delscreen(screen);
+    fclose(input);
+    fclose(output);
+    puts("  PASS  locked sign-in masks passwords and fits an 8x40 terminal");
+}
+
 int main(void) {
     test_layout();
     test_iterator();
     test_conversations();
     test_scrollback();
     test_screen();
+    test_locked_auth();
     puts("Client UI regressions passed");
     return 0;
 }

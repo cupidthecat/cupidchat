@@ -27,6 +27,7 @@ typedef struct {
     size_t obuf_limit;
     int history_size;
     bool verbose;
+    char server_password[256];
 } server_config_t;
 
 void config_defaults(server_config_t *cfg);

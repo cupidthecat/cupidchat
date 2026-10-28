@@ -109,7 +109,8 @@ static int handle_hello(conn_t *c, const frame_t *f, server_state_t *s) {
     tlv_put_str(&b, TAG_BANNER, banner);
     tlv_put_u32(&b, TAG_CAPS,
                 CAP_HISTORY | CAP_BUDDIES | CAP_PROFILES | CAP_ACCOUNT_REQUIRED | CAP_ADMIN |
-                    CAP_POLLS | CAP_BBS | CAP_ROOM_TOOLS);
+                    CAP_POLLS | CAP_BBS | CAP_ROOM_TOOLS |
+                    (s->cfg->server_password[0] ? CAP_SERVER_PASSWORD : 0));
     uint32_t plen;
     uint8_t *p = tlv_builder_take(&b, &plen);
     conn_send_frame(c, SMSG_WELCOME, FRAME_FLAG_PRIORITY_HIGH, server_next_seq(s), p, plen, s->cfg);
@@ -640,9 +641,24 @@ static bool read_credentials(const frame_t *f, char *nick, size_t nick_size, cha
     return true;
 }
 
+static bool server_password_matches(const frame_t *f, const server_config_t *cfg) {
+    if (!cfg->server_password[0])
+        return true;
+    uint16_t length = 0;
+    const uint8_t *value = tlv_find(f->payload, f->hdr.length, TAG_SERVER_PASSWORD, &length);
+    if (!value || !length || length >= sizeof(cfg->server_password))
+        return false;
+    unsigned difference = (unsigned)(length ^ strlen(cfg->server_password));
+    for (size_t i = 0; i < sizeof(cfg->server_password); i++)
+        difference |= (i < length ? value[i] : 0) ^ (unsigned char)cfg->server_password[i];
+    return difference == 0;
+}
+
 static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
     if (!rate_consume(&c->rate))
         return send_error(c, ERR_RATE_LIMITED, "slow down", s);
+    if (!server_password_matches(f, s->cfg))
+        return send_error(c, ERR_AUTH_FAILED, "Incorrect or missing server password", s);
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256] = {0};
     if (!read_credentials(f, nick, sizeof(nick), pass, sizeof(pass)))
@@ -675,6 +691,8 @@ static int handle_register(conn_t *c, const frame_t *f, server_state_t *s) {
 static int handle_login(conn_t *c, const frame_t *f, server_state_t *s) {
     if (!rate_consume(&c->rate))
         return send_error(c, ERR_RATE_LIMITED, "slow down", s);
+    if (!server_password_matches(f, s->cfg))
+        return send_error(c, ERR_AUTH_FAILED, "Incorrect or missing server password", s);
     char nick[MAX_NICK_LEN + 1] = {0};
     char pass[256] = {0};
     if (!read_credentials(f, nick, sizeof(nick), pass, sizeof(pass)))

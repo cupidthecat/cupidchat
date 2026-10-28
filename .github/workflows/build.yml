@@ -40,3 +40,7 @@ jobs:
       - name: Exercise terminal input and resize
         if: hashFiles('tests/client/test_terminal.py') != ''
         run: python3 tests/client/test_terminal.py
+      - name: Exercise password-protected servers
+        run: |
+          python3 tests/server/test_server_password.py
+          CUPIDCHAT_TEST_LOCKED=1 python3 tests/client/test_terminal.py

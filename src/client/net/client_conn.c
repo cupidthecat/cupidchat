@@ -250,28 +250,26 @@ int client_send_nick(client_conn_t *cc, const char *nick) {
     return r;
 }
 
-int client_send_register(client_conn_t *cc, const char *nick, const char *pass) {
+int client_send_auth(client_conn_t *cc, bool create, const char *nick, const char *pass,
+                     const char *server_password) {
     tlv_builder_t b;
-    tlv_builder_init(&b);
-    tlv_put_str(&b, TAG_NICK, nick);
-    tlv_put_str(&b, TAG_PASSWORD, pass);
-    uint32_t plen;
-    uint8_t *p = tlv_builder_take(&b, &plen);
-    int r = client_send_frame(cc, CMSG_REGISTER, p, plen);
-    free(p);
+    if (tlv_builder_init(&b) < 0)
+        return -1;
+    int r = -1;
+    if (tlv_put_str(&b, TAG_NICK, nick) == 0 && tlv_put_str(&b, TAG_PASSWORD, pass) == 0 &&
+        (!server_password || tlv_put_str(&b, TAG_SERVER_PASSWORD, server_password) == 0))
+        r = client_send_frame(cc, create ? CMSG_REGISTER : CMSG_LOGIN, b.buf, (uint32_t)b.len);
+    explicit_bzero(b.buf, b.cap);
+    tlv_builder_free(&b);
     return r;
 }
 
+int client_send_register(client_conn_t *cc, const char *nick, const char *pass) {
+    return client_send_auth(cc, true, nick, pass, NULL);
+}
+
 int client_send_login(client_conn_t *cc, const char *nick, const char *pass) {
-    tlv_builder_t b;
-    tlv_builder_init(&b);
-    tlv_put_str(&b, TAG_NICK, nick);
-    tlv_put_str(&b, TAG_PASSWORD, pass);
-    uint32_t plen;
-    uint8_t *p = tlv_builder_take(&b, &plen);
-    int r = client_send_frame(cc, CMSG_LOGIN, p, plen);
-    free(p);
-    return r;
+    return client_send_auth(cc, false, nick, pass, NULL);
 }
 
 int client_send_logout(client_conn_t *cc) {
