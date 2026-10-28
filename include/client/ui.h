@@ -74,8 +74,10 @@ typedef struct {
     int buddy_cursor;
     int emoji_cursor;
     bool show_auth, auth_register, auth_pending, auth_deferred;
-    int auth_focus, auth_cursors[3];
+    bool auth_server_required;
+    int auth_focus, auth_cursors[4];
     char auth_name[33], auth_password[256], auth_confirm[256], auth_error[192];
+    char auth_server_password[256];
     bool show_profile, profile_loading, profile_editing, profile_saving, profile_discard;
     profile_info_t profile;
     profile_fields_t profile_draft;

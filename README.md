@@ -13,6 +13,7 @@ Terminal-first chat system written in C11. A lightweight server (`cupid-chatd`) 
 - Persistent BBS threads and replies, unread markers, and clickable author profiles
 - Persistent account moderation, admin roles, editable MOTD and banners, and server polls
 - Required account sign-in; guest connections cannot access chat
+- Optional shared server password, entered in a masked sign-in field
 - SQLite WAL persistence (rooms, users, profiles, buddies, per-room history, topics)
 - Token-bucket rate limiting per connection
 - Per-connection output backpressure with priority frame dropping
@@ -155,9 +156,27 @@ sign-in form; an older client must send `/login` or `/register` before chatting.
 --obuf-limit BYTES   Per-connection output buffer cap  (min: 4096)
 --history N          Per-room history to replay on join  (1-10000, default: 50)
 --db PATH            SQLite database path  (default: cupidchat.db)
+--server-password-file FILE  Require a shared server password (1-255 bytes)
 --verbose            Log every frame and event to stderr
 -h, --help
 ```
+
+For a private server, store a shared password in a file readable only by the
+server account and its administrator, then start with
+`--server-password-file /path/to/password`. The file contains one password of
+1-255 bytes, with an optional final newline. The server refuses to start if a
+configured file is missing, empty, oversized, or contains multiple lines.
+`CUPIDCHAT_SERVER_PASSWORD_FILE` can supply the path instead; the command-line
+option takes precedence.
+
+Updated clients show **Server key** on the sign-in and create-account forms.
+Enter the shared server password there and your own account password in
+**Password**. Both are required; the server password alone never grants chat
+access. Passwords are masked and cleared after submission. Servers without a
+password file keep the usual account-only sign-in. Older clients can still
+connect to unlocked servers; locked servers require the updated sign-in form.
+The welcome message and server capabilities remain visible before sign-in.
+Use Tailscale or TLS to protect passwords in transit.
 
 ## Client options
 

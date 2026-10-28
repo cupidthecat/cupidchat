@@ -19,14 +19,21 @@ def main():
     root = Path(__file__).resolve().parents[2]
     client = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / 'cupid-chat'
     server = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / 'cupid-chatd'
+    locked = os.environ.get('CUPIDCHAT_TEST_LOCKED') == '1'
     with tempfile.TemporaryDirectory(prefix='cupidchat-terminal-') as temporary:
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
         with open(Path(temporary) / 'server.log', 'w+') as log:
+            server_env = dict(os.environ)
+            server_env.pop('CUPIDCHAT_SERVER_PASSWORD_FILE', None)
+            if locked:
+                secret = Path(temporary) / 'server-password'
+                secret.write_text('terminal-server-key\n')
+                server_env['CUPIDCHAT_SERVER_PASSWORD_FILE'] = str(secret)
             daemon = subprocess.Popen([str(server), '--host', '127.0.0.1', '--port', str(port),
                                        '--db', str(Path(temporary) / 'chat.db')],
-                                      stdout=log, stderr=log)
+                                      stdout=log, stderr=log, env=server_env)
             process = None
             master = None
             try:
@@ -67,10 +74,23 @@ def main():
                         transcript.extend(os.read(master, 65536))
 
                 receive_until(b'CupidChat sign in')
-                os.write(master, b'\t\t\t\r')
+                if locked:
+                    receive_until(b'Server key')
+                os.write(master, b'\t\t\t\t\r' if locked else b'\t\t\t\r')
                 receive_until(b'Confirm')
                 os.write(master, b'\rterminal-password\rterminal-password\r')
+                if locked:
+                    # A rejected server password clears every secret and keeps the form usable.
+                    os.write(master, b'wrong-server-key\r')
+                    receive_until(b'Incorrect or missing server password')
+                    os.write(master, b'terminal-password\rterminal-password\r')
+                    os.write(master, b'terminal-server-key\r')
                 receive_until(b'Welcome to CupidChat')
+                if locked:
+                    os.write(master, b'/logout\r')
+                    receive_until(b'CupidChat sign in')
+                    os.write(master, b'\rterminal-password\rterminal-server-key\r')
+                    receive_until(b'Welcome to CupidChat')
                 os.write(master, b'draft_survives_resize')
                 receive_until(b'draft_survives_resize')
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 4, 12, 0, 0))
@@ -93,7 +113,11 @@ def main():
                 process.wait(timeout=5)
                 assert process.returncode == 0
                 assert b'AddressSanitizer' not in transcript and b'runtime error:' not in transcript
-                print('PASS terminal: resize recovery, draft preservation, mouse quit, cancel, and confirm')
+                if locked:
+                    assert b'terminal-server-key' not in transcript, 'server password was not masked'
+                    assert b'wrong-server-key' not in transcript, 'incorrect password was not masked'
+                print('PASS terminal: account creation, password masking, resize recovery, '
+                      'draft preservation, mouse quit, cancel, and confirm; locked=' + str(locked))
             finally:
                 if process is not None and process.poll() is None:
                     process.terminate()

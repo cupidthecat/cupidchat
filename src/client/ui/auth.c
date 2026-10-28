@@ -8,7 +8,12 @@ void ui_auth_clear_secrets(ui_state_t *ui) {
     ui->auth_deferred = false;
     explicit_bzero(ui->auth_password, sizeof(ui->auth_password));
     explicit_bzero(ui->auth_confirm, sizeof(ui->auth_confirm));
-    ui->auth_cursors[1] = ui->auth_cursors[2] = 0;
+    explicit_bzero(ui->auth_server_password, sizeof(ui->auth_server_password));
+    ui->auth_cursors[1] = ui->auth_cursors[2] = ui->auth_cursors[3] = 0;
+}
+
+static int field_count(const ui_state_t *ui) {
+    return 2 + ui->auth_register + ui->auth_server_required;
 }
 
 static void toggle_mode(ui_state_t *ui) {
@@ -27,12 +32,16 @@ static void geometry(ui_state_t *ui, int *height, int *width, int *top, int *lef
         *width = 64;
     *top = (ui->layout.rows - *height) / 2;
     *left = (ui->layout.cols - *width) / 2;
-    int fields = ui->auth_register ? 3 : 2;
+    int fields = field_count(ui);
     *first = fields <= *height - 5 ? 0 : ui->auth_focus < fields ? ui->auth_focus : fields - 1;
 }
 
 static char *field(ui_state_t *ui, int index) {
-    return index == 0 ? ui->auth_name : index == 1 ? ui->auth_password : ui->auth_confirm;
+    if (index == 0)
+        return ui->auth_name;
+    if (index == 1)
+        return ui->auth_password;
+    return ui->auth_register && index == 2 ? ui->auth_confirm : ui->auth_server_password;
 }
 
 int ui_auth_input(ui_state_t *ui, int key, uint32_t character, bool printable) {
@@ -47,7 +56,7 @@ int ui_auth_input(ui_state_t *ui, int key, uint32_t character, bool printable) {
         toggle_mode(ui);
         return UI_NONE;
     }
-    int fields = ui->auth_register ? 3 : 2;
+    int fields = field_count(ui);
     if (key == KEY_MOUSE) {
         MEVENT mouse;
         if (getmouse(&mouse) != OK || !(mouse.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED)))
@@ -111,8 +120,9 @@ void ui_redraw_auth(ui_state_t *ui, const cli_model_t *m) {
               ui->auth_register ? " Create a CupidChat account " : " CupidChat sign in ");
     wattroff(window, A_BOLD | COLOR_PAIR(1));
     mvwaddnstr(window, 1, 2, "An account is required to chat.", w - 4);
-    const char *labels[] = {"Account", "Password", "Confirm"};
-    int fields = ui->auth_register ? 3 : 2;
+    const char *labels[] = {"Account", "Password", ui->auth_register ? "Confirm" : "Server key",
+                            "Server key"};
+    int fields = field_count(ui);
     int cursor_row = -1, cursor_column = 0;
     for (int i = first, row = 2; i < fields && row < h - 3; i++, row++) {
         mvwaddnstr(window, row, 2, labels[i], 10);

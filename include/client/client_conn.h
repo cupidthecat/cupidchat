@@ -26,6 +26,8 @@ int client_flush(client_conn_t *cc);
 int client_send_frame(client_conn_t *cc, uint16_t type, const uint8_t *payload, uint32_t plen);
 int client_send_hello(client_conn_t *cc, const char *nick);
 int client_send_nick(client_conn_t *cc, const char *nick);
+int client_send_auth(client_conn_t *cc, bool create, const char *nick, const char *pass,
+                     const char *server_password);
 int client_send_register(client_conn_t *cc, const char *nick, const char *pass);
 int client_send_login(client_conn_t *cc, const char *nick, const char *pass);
 int client_send_logout(client_conn_t *cc);

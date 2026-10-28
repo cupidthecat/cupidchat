@@ -9,12 +9,53 @@
  *               [--history N] [--verbose] [-h|--help]
  */
 
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "server/config.h"
+
+/* A configured but unreadable/empty secret must never silently unlock a server. */
+static int load_server_password(server_config_t *cfg, const char *path) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    struct stat st;
+    if (fd < 0) {
+        fprintf(stderr, "Could not open server password file\n");
+        return -1;
+    }
+    if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        fprintf(stderr, "Server password file must be a regular file\n");
+        return -1;
+    }
+    FILE *file = fdopen(fd, "rb");
+    if (!file) {
+        close(fd);
+        return -1;
+    }
+    char secret[258] = {0};
+    size_t n = fread(secret, 1, sizeof(secret), file);
+    bool failed = ferror(file) || n == sizeof(secret);
+    fclose(file);
+    if (n && secret[n - 1] == '\n') {
+        n--;
+        if (n && secret[n - 1] == '\r')
+            n--;
+    }
+    if (!n || n >= sizeof(cfg->server_password) || memchr(secret, 0, n) ||
+        memchr(secret, '\n', n) || memchr(secret, '\r', n))
+        failed = true;
+    if (!failed)
+        memcpy(cfg->server_password, secret, n);
+    explicit_bzero(secret, sizeof(secret));
+    if (failed)
+        fprintf(stderr, "Server password file must contain one password of 1-255 bytes\n");
+    return failed ? -1 : 0;
+}
 
 void config_defaults(server_config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
@@ -50,6 +91,8 @@ void config_usage(const char *prog) {
             "  --obuf-limit BYTES  Output queue limit per client (default: 4194304)\n"
             "  --history N         Room history messages to keep (default: 50)\n"
             "  --db PATH           SQLite database file (default: cupidchat.db)\n"
+            "  --server-password-file FILE  Require a shared password before account access\n"
+            "                      Or set CUPIDCHAT_SERVER_PASSWORD_FILE\n"
             "  --verbose           Enable debug logging\n"
             "  -h, --help          Show this help\n",
             prog);
@@ -73,11 +116,13 @@ int config_parse(int argc, char **argv, server_config_t *cfg) {
         {"obuf-limit", required_argument, NULL, 'o'},
         {"history", required_argument, NULL, 'n'},
         {"db", required_argument, NULL, 'd'},
+        {"server-password-file", required_argument, NULL, 's'},
         {"verbose", no_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
 
+    const char *password_file = getenv("CUPIDCHAT_SERVER_PASSWORD_FILE");
     int opt;
     while ((opt = getopt_long(argc, argv, "h", longopts, NULL)) != -1) {
         switch (opt) {
@@ -124,6 +169,13 @@ int config_parse(int argc, char **argv, server_config_t *cfg) {
             case 'd':
                 snprintf(cfg->db_path, sizeof(cfg->db_path), "%s", optarg);
                 break;
+            case 's':
+                password_file = optarg;
+                if (!*password_file) {
+                    fprintf(stderr, "Server password file path cannot be empty\n");
+                    return -1;
+                }
+                break;
             case 'v':
                 cfg->verbose = true;
                 break;
@@ -165,5 +217,7 @@ int config_parse(int argc, char **argv, server_config_t *cfg) {
     if (cfg->ping_timeout < 1)
         cfg->ping_timeout = 1;
 
+    if (password_file && *password_file && load_server_password(cfg, password_file) < 0)
+        return -1;
     return 0;
 }

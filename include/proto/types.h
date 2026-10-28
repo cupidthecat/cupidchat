@@ -15,6 +15,7 @@
 #define CAP_POLLS 0x00000020u
 #define CAP_BBS 0x00000040u
 #define CAP_ROOM_TOOLS 0x00000080u
+#define CAP_SERVER_PASSWORD 0x00000100u
 #define MAX_BUDDIES 64
 
 /* Shared wire values. Rebuild clients with these recovered headers:
@@ -160,7 +161,8 @@ typedef enum {
     TAG_ROOM_ROLE = 0x0081,
     TAG_ROOM_OWNER = 0x0082,
     TAG_ENABLED = 0x0083,
-    TAG_BANNED = 0x0084
+    TAG_BANNED = 0x0084,
+    TAG_SERVER_PASSWORD = 0x0085
 } tlv_tag_t;
 
 typedef enum {
